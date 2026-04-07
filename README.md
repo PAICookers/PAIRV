@@ -5,35 +5,52 @@ PAIRV is a CLI-oriented application project for a custom Nuclei `N307FD`-based R
 The active build flow is defined by the local SDK-style tree in:
 
 - `application/`
+- `common/`
 - `Build/`
 - `NMSIS/`
 - `OS/`
 - `SoC/`
+- `tests/`
+- `third_party`
 
 Other directories in the repository are not part of the primary CLI build flow.
 
 ## What This Project Provides
 
 - A local Nuclei-style build system that can build applications directly from the command line
-- Baremetal sample applications for bring-up, NICE/custom instruction validation, and UART/SNN integration
+- Reusable common code for logging and NICE-related helpers
+- Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, debug logging, and EmbeddedProto flash assets
 - FreeRTOS sample applications
+- Baremetal test applications under `tests/`
 - Local SoC integration for the current platform, including startup code, linker scripts, and board configuration
 
 ## Active Build Layout
 
 ```text
 PAIRV/
+├── common/
+│   ├── rv_debug.{h,c}
+│   └── rv_nice/
 ├── application/
 │   ├── baremetal/
+│   │   ├── debug_demo/
 │   │   ├── helloworld/
 │   │   ├── nice/
+│   │   ├── proto_flash/
 │   │   └── uart/
+│   ├── benchmark/
+│   │   ├── coremark/
+│   │   └── dhrystone/
 │   └── freertos/
 │       └── demo/
 ├── Build/
 ├── NMSIS/
 ├── OS/
 ├── SoC/
+├── tests/
+│   └── utils/
+├── third_party/
+│   └── EmbeddedProto/
 ├── Makefile
 ├── setup.sh
 └── setup_config.sh
@@ -46,11 +63,14 @@ Current effective defaults:
 - `SOC=evalsoc`
 - `BOARD=nuclei_fpga_eval`
 - `CORE=n307fd`
-- `DOWNLOAD=ilm`
+- `DOWNLOAD=ilmflashxip`
 
-Application-specific exception:
+Application-specific notes:
 
-- `application/baremetal/nice` only supports `DOWNLOAD=ilmflashxip`
+- `application/baremetal/nice` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- `application/baremetal/uart` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- `application/baremetal/proto_flash` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- lightweight demos such as `helloworld` and `debug_demo` can be built with `DOWNLOAD=ilm`
 
 ## Environment Setup
 
@@ -80,11 +100,10 @@ export NUCLEI_SDK_ROOT=$(pwd)
 source setup.sh
 ```
 
-Typical setup sequence:
+If you want to build the [EmbeddedProto](https://github.com/Embedded-AMS/EmbeddedProto) demo, initialize the submodule first:
 
 ```bash
-export NUCLEI_SDK_ROOT=$(pwd)
-source setup.sh
+git submodule update --init --recursive
 ```
 
 ## Top-Level Make Usage
@@ -106,39 +125,33 @@ make help
 ### Build one application
 
 ```bash
-make PROGRAM=application/baremetal/helloworld all
-make PROGRAM=application/baremetal/nice all
-make PROGRAM=application/baremetal/uart all
-make PROGRAM=application/freertos/demo all
-```
-
-### Build with an explicit download mode
-
-```bash
-make PROGRAM=application/baremetal/helloworld DOWNLOAD=ilm all
-make PROGRAM=application/baremetal/nice DOWNLOAD=ilmflashxip all
-make PROGRAM=application/baremetal/uart DOWNLOAD=flashxip all
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld all
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/debug_demo all
+make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/nice all
+make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/uart all
+make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/proto_flash all
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/freertos/demo all
 ```
 
 ### Inspect configuration
 
 ```bash
-make PROGRAM=application/baremetal/helloworld info
-make PROGRAM=application/baremetal/helloworld showflags
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld info
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld showflags
 ```
 
 ### Generate extra outputs
 
 ```bash
-make PROGRAM=application/baremetal/helloworld bin
-make PROGRAM=application/baremetal/helloworld dasm
-make PROGRAM=application/baremetal/helloworld size
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld bin
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld dasm
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld size
 ```
 
 ### Clean
 
 ```bash
-make PROGRAM=application/baremetal/helloworld clean
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld clean
 make cleanall
 ```
 
@@ -148,15 +161,17 @@ make cleanall
 make buildall
 ```
 
+`buildall` and `cleanall` scan both `application/` and `tests/`.
+
 ## Download And Debug
 
 Examples:
 
 ```bash
-make PROGRAM=application/baremetal/helloworld upload
-make PROGRAM=application/baremetal/helloworld run_openocd
-make PROGRAM=application/baremetal/helloworld run_gdb
-make PROGRAM=application/baremetal/helloworld debug
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld upload
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld run_openocd
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld run_gdb
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld debug
 ```
 
 These commands depend on:
@@ -171,6 +186,10 @@ These commands depend on:
 
 Simple bring-up example for startup, console output, and base platform verification.
 
+### `application/baremetal/debug_demo`
+
+Minimal demo for the shared `common/rv_debug.{h,c}` logging helper.
+
 ### `application/baremetal/nice`
 
 NICE/custom instruction example.
@@ -178,11 +197,24 @@ NICE/custom instruction example.
 Constraints:
 
 - links with `-lm`
-- requires `DOWNLOAD=ilmflashxip`
+- requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 
 ### `application/baremetal/uart`
 
 Board-integration-heavy application for UART, SNN-related register access, interrupts, FIFO handling, and command processing.
+
+Constraints:
+
+- requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+
+### `application/baremetal/proto_flash`
+
+EmbeddedProto-based demo that links a serialized protobuf asset into flash and uses the shared debug helper.
+
+Constraints:
+
+- requires `third_party/EmbeddedProto`
+- requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 
 ### `application/freertos/demo`
 
