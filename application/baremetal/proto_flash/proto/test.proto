@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+enum OutputCodec {
+  OUTPUT_CODEC_UNSET = 0;
+  DIRECT_AXON = 1;
+  PACKED_32BIT = 2;
+}
+
+message RouteSpan {
+  uint32 tick_relative = 1;
+  uint32 addr_axon = 2;
+}
+
+message TestMeta {
+  uint32 schema_version = 1;
+  string build_id = 2;
+  OutputCodec codec = 3;
+}
+
+message TestOutput {
+  uint32 output_id = 1;
+  string debug_name = 2;
+  repeated uint32 shape = 3;
+  repeated RouteSpan route_spans = 4;
+}
+
+message TestMsg {
+  TestMeta meta = 1;
+  bool enabled = 2;
+  sint32 offset = 3;
+  repeated uint32 input_shape = 4;
+  repeated TestOutput outputs = 5;
+}
