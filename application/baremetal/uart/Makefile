@@ -8,6 +8,10 @@ INCDIRS = . inc
 
 COMMON_FLAGS := -Os
 
-STDCLIB ?= newlib_small
-
 include $(NUCLEI_SDK_ROOT)/Build/Makefile.base
+
+ifneq ($(DOWNLOAD),ilmflashxip)
+ifneq ($(DOWNLOAD),flashxip)
+$(error only supports DOWNLOAD=ilmflashxip or flashxip because it stores a large data set)
+endif
+endif

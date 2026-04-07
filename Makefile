@@ -14,14 +14,15 @@ __help:
 	@echo "make [EXTRA_APP_ROOTDIRS=/path/to/extraapps] cleanall    Clean all the applications"
 	@echo "make [EXTRA_APP_ROOTDIRS=/path/to/extraapps] buildall    Rebuild all the applications"
 	@echo "Examples:"
-	@echo "make PROGRAM=application/baremetal/helloworld all"
-	@echo "make PROGRAM=application/baremetal/nice DOWNLOAD=ilmflashxip all"
-	@echo "make PROGRAM=application/baremetal/uart clean all"
+	@echo "make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld all"
+	@echo "make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/nice all"
+	@echo "make CORE=n307fd DOWNLOAD=ilm PROGRAM=tests/softmax_test clean"
+	@echo "make CORE=n307fd DOWNLOAD=ilm PROGRAM=tests/softmax_test all"
 	@echo "make cleanall"
 	@echo "make buildall"
 
 # Default root directories to search
-APP_ROOTDIRS := application
+APP_ROOTDIRS := application tests
 # Extra application root directories passed by make
 EXTRA_APP_ROOTDIRS ?=
 

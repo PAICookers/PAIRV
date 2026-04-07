@@ -1,4 +1,3 @@
-// See LICENSE for license details.
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
