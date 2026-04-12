@@ -19,7 +19,7 @@ Other directories in the repository are not part of the primary CLI build flow.
 
 - A local Nuclei-style build system that can build applications directly from the command line
 - Reusable common code for logging and NICE-related helpers
-- Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, debug logging, and EmbeddedProto flash assets
+- Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, NMSIS-NN smoke validation, debug logging, and EmbeddedProto flash assets
 - FreeRTOS sample applications
 - Baremetal test applications under `tests/`
 - Local SoC integration for the current platform, including startup code, linker scripts, and board configuration
@@ -37,6 +37,7 @@ PAIRV/
 │   │   ├── helloworld/
 │   │   ├── nice/
 │   │   ├── proto_flash/
+│   │   ├── simple_nn/
 │   │   └── uart/
 │   ├── benchmark/
 │   │   ├── coremark/
@@ -45,12 +46,18 @@ PAIRV/
 │       └── demo/
 ├── Build/
 ├── NMSIS/
+│   ├── Core/Include/
+│   ├── NN/Include/
+│   ├── Library/NN/GCC/
+│   ├── build.mk
+│   └── manifest.json
 ├── OS/
 ├── SoC/
 ├── tests/
 │   └── utils/
 ├── third_party/
 │   └── EmbeddedProto/
+│   └── NMSIS/
 ├── Makefile
 ├── setup.sh
 └── setup_config.sh
@@ -70,6 +77,7 @@ Application-specific notes:
 - `application/baremetal/nice` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 - `application/baremetal/uart` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 - `application/baremetal/proto_flash` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- `application/baremetal/simple_nn` can be built with `DOWNLOAD=ilm`
 - lightweight demos such as `helloworld` and `debug_demo` can be built with `DOWNLOAD=ilm`
 
 ## Environment Setup
@@ -106,6 +114,39 @@ If you want to build the [EmbeddedProto](https://github.com/Embedded-AMS/Embedde
 git submodule update --init --recursive
 ```
 
+## NMSIS Layout
+
+PAIRV uses a two-layer NMSIS arrangement:
+
+- `NMSIS/`
+  - repo-owned default consumption mirror used by ordinary application builds
+  - contains the shipped `Core`/`NN` headers, `build.mk`, and the prebuilt `NN` archive for `rv32imafdc`
+- `third_party/NMSIS/`
+  - pinned upstream source submodule
+  - used by developers when tracking upstream changes or rebuilding the shipped prebuilt library
+
+The default build path remains simple:
+
+```bash
+export NUCLEI_SDK_ROOT=$(pwd)
+source setup.sh
+```
+
+That default path uses the top-level `NMSIS/` mirror automatically.
+
+If a developer wants to test directly against the upstream source tree instead of the shipped mirror, they can override:
+
+```bash
+make NUCLEI_SDK_NMSIS=$(pwd)/third_party/NMSIS/NMSIS ...
+```
+
+To refresh the shipped prebuilt mirror from the upstream submodule:
+
+```bash
+export NUCLEI_TOOL_ROOT=/path/to/nuclei/toolchain
+./scripts/refresh_nmsis_prebuilt.sh
+```
+
 ## Top-Level Make Usage
 
 The root `Makefile` is the intended CLI entrypoint.
@@ -130,6 +171,7 @@ make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/debug_demo all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/nice all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/uart all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/proto_flash all
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/simple_nn all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/freertos/demo all
 ```
 
@@ -215,6 +257,16 @@ Constraints:
 
 - requires `third_party/EmbeddedProto`
 - requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+
+### `application/baremetal/simple_nn`
+
+Minimal NMSIS-NN validation application using a deterministic `conv -> relu -> linear` pipeline.
+
+Constraints:
+
+- links `nmsis_nn`
+- default verification target for the shipped prebuilt `NN` library
+- can be built with `DOWNLOAD=ilm`
 
 ### `application/freertos/demo`
 
