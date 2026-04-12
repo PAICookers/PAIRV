@@ -1,3 +1,6 @@
 [submodule "third_party/EmbeddedProto"]
 	path = third_party/EmbeddedProto
 	url = https://github.com/Embedded-AMS/EmbeddedProto.git
+[submodule "third_party/NMSIS"]
+	path = third_party/NMSIS
+	url = https://github.com/Nuclei-Software/NMSIS.git

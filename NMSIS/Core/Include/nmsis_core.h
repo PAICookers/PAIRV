@@ -92,8 +92,15 @@
 /* Include core cache feature header file */
 #include "core_feature_cache.h"
 /* Include core cidu feature header file */
- #include "core_feature_cidu.h"
-
+#include "core_feature_cidu.h"
+/* Include core pma feature header file */
+#include "core_feature_pma.h"
+/* Include core smpcc feature header file */
+#include "core_feature_smpcc.h"
+/* Include core ecc feature header file */
+#include "core_feature_ecc.h"
+/* Include core iregion info header file */
+#include "core_feature_iinfo.h"
 /* Include compatiable functions header file */
 #include "core_compatiable.h"
 

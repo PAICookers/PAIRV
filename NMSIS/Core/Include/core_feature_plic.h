@@ -78,13 +78,15 @@
  */
 #ifndef __PLIC_HARTID
 #define PLIC_GetHartID()                    (__get_hart_index())
+#define PLIC_GetHartID_S()                  (__get_hart_index_s())
 #else
 #define PLIC_GetHartID()                    (__PLIC_HARTID)
+#define PLIC_GetHartID_S()                  (__PLIC_HARTID)
 #endif
 
 #define PLIC_GetHartMContextID()            (PLIC_GetHartID() << 1)
 // TODO SMODE HARTID need to handle, maybe use a predefined variable of hartid
-#define PLIC_GetHartSContextID()            ((PLIC_GetHartID() << 1) + 1)
+#define PLIC_GetHartSContextID()            ((PLIC_GetHartID_S() << 1) + 1)
 
 #define PLIC_PRIORITY_REGADDR(source)       ((PLIC_BASE) + (PLIC_PRIORITY_OFFSET)  + ((source) << PLIC_PRIORITY_SHIFT_PER_SOURCE))
 #define PLIC_PENDING_REGADDR(source)        ((PLIC_BASE) + (PLIC_PENDING_OFFSET)   + (((source) >> 5) * 4))
@@ -153,7 +155,7 @@ __STATIC_FORCEINLINE void PLIC_EnableContextInterrupt(uint32_t ctxid, uint32_t s
     volatile uint32_t *enable_reg = (uint32_t *)PLIC_ENABLE_REGADDR(ctxid, source);
 
     uint32_t current = *enable_reg;
-    current = current | (1 << (source & 0x1F));
+    current = current | (1UL << (source & 0x1F));
     *enable_reg = current;
 }
 
@@ -172,7 +174,7 @@ __STATIC_FORCEINLINE void PLIC_DisableContextInterrupt(uint32_t ctxid, uint32_t 
     volatile uint32_t *enable_reg = (uint32_t *)PLIC_ENABLE_REGADDR(ctxid, source);
 
     uint32_t current = *enable_reg;
-    current = current & (~(1 << (source & 0x1F)));
+    current = current & (~(1UL << (source & 0x1F)));
     *enable_reg = current;
 }
 
@@ -212,7 +214,7 @@ __STATIC_FORCEINLINE void PLIC_SetInterruptPending(uint32_t source)
     volatile uint32_t *pending_reg = (uint32_t *)PLIC_PENDING_REGADDR(source);
 
     uint32_t current = *pending_reg;
-    current = current | (1 << (source & 0x1F));
+    current = current | (1UL << (source & 0x1F));
     *pending_reg = current;
 }
 
@@ -231,7 +233,7 @@ __STATIC_FORCEINLINE void PLIC_ClearInterruptPending(uint32_t source)
     volatile uint32_t *pending_reg = (uint32_t *)PLIC_PENDING_REGADDR(source);
 
     uint32_t current = *pending_reg;
-    current = current & (~(1 << (source & 0x1F)));
+    current = current & (~(1UL << (source & 0x1F)));
     *pending_reg = current;
 }
 
@@ -346,7 +348,7 @@ __STATIC_FORCEINLINE void PLIC_CompleteContextInterrupt(uint32_t ctxid, uint32_t
  * * Disable all interrupts
  * * Set priority threshold to value specified by thresh
  */
-__STATIC_FORCEINLINE void PLIC_Context_Init(uint32_t ctxid, uint32_t num_sources, uint32_t enable, uint32_t thresh)
+__STATIC_INLINE void PLIC_Context_Init(uint32_t ctxid, uint32_t num_sources, uint32_t enable, uint32_t thresh)
 {
     uint32_t i;
 
@@ -381,8 +383,8 @@ __STATIC_FORCEINLINE void PLIC_Context_Init(uint32_t ctxid, uint32_t num_sources
 #define PLIC_SetThreshold(source, thresh)               PLIC_SetContextThreshold(PLIC_GetHartMContextID(), (source), (thresh))
 #define PLIC_SetThreshold_S(source, thresh)             PLIC_SetContextThreshold(PLIC_GetHartSContextID(), (source), (thresh))
 
-#define PLIC_GetThreshold(source)                       PLIC_GetContextThreshold(PLIC_GetHartMContextID(), (source))
-#define PLIC_GetThreshold_S(source)                     PLIC_GetContextThreshold(PLIC_GetHartSContextID(), (source))
+#define PLIC_GetThreshold()                             PLIC_GetContextThreshold(PLIC_GetHartMContextID())
+#define PLIC_GetThreshold_S()                           PLIC_GetContextThreshold(PLIC_GetHartSContextID())
 
 /**
  * \brief  Set Trap entry address

@@ -39,8 +39,9 @@ extern "C" {
 /* ##########################  CIDU functions  #################################### */
 /**
  * \defgroup NMSIS_Core_CIDU         CIDU Functions
+ * \ingroup  NMSIS_Core
  * \brief    Functions that manage external interrupts, inter core interrupts and semaphores.
- * @{
+ * \details
  *
  * Nuclei provide Cluster Interrupt Distribution Unit (CIDU) for scenarios that a SMP system is designed for real
  * time application or both Linux and real time application, and Nuclei processor core can optionally support CIDU.
@@ -52,6 +53,7 @@ extern "C" {
  * * Support up to 16 Inter Core Interrupts
  * * Support 32 Semaphores
  *
+ *   @{
  */
 
 #ifndef __CIDU_BASEADDR
@@ -60,7 +62,7 @@ extern "C" {
 #endif
 
 #define CIDU_BASE                                __CIDU_BASEADDR
-#define CIDU_RECEIVE_INTERRUPT_EN(core_id)       (0x1U << core_id)   /*!< Indicates the core can receive corresponding interrupt */
+#define CIDU_RECEIVE_INTERRUPT_EN(core_id)       (0x1UL << core_id)   /*!< Indicates the core can receive corresponding interrupt */
 
 #define CIDU_CORE_INT_STATUS_OFS      0x0        /*!< Core n Inter Core Interrupt status register base offset */
 #define CIDU_SEMAPHORE_OFS            0x80       /*!< Semaphore n register base offset */
@@ -181,11 +183,11 @@ __STATIC_FORCEINLINE uint32_t CIDU_GetBroadcastModeStatus(uint32_t int_id)
  * - \ref CIDU_BroadcastExtInterrupt
  * - \ref CIDU_ResetFirstClaimMode
 */
-__STATIC_FORCEINLINE long CIDU_SetFirstClaimMode(uint32_t int_id, uint32_t core_id)
+__STATIC_INLINE long CIDU_SetFirstClaimMode(uint32_t int_id, uint32_t core_id)
 {
     uint32_t val = 0;
     uint32_t* addr = (uint32_t*)CIDU_INT_MASK_ADDR(int_id);
-    uint32_t mask = 1 << core_id;
+    uint32_t mask = 1UL << core_id;
 
     __SW(addr, mask);
     val = __LW(addr);
@@ -309,7 +311,7 @@ __STATIC_FORCEINLINE void CIDU_ClearInterCoreIntReq(uint32_t send_core_id, uint3
     uint32_t val = 0;
     uint32_t* addr = (uint32_t*)CIDU_CORE_INT_STATUS_ADDR(recv_core_id);
 
-    val = (uint32_t)(1 << send_core_id);
+    val = (uint32_t)(1UL << send_core_id);
     __SW(addr, val);
 }
 /** @} */ /* End of Doxygen Group NMSIS_Core_ICI */
@@ -357,7 +359,7 @@ __STATIC_FORCEINLINE uint32_t CIDU_GetSemaphoreStatus(uint32_t semph_n)
  * - \ref CIDU_GetSemaphoreStatus
  * - \ref CIDU_ReleaseSemaphore
 */
-__STATIC_FORCEINLINE long CIDU_CheckSemaphoreAcquired(uint32_t semph_n, uint32_t core_id)
+__STATIC_INLINE long CIDU_CheckSemaphoreAcquired(uint32_t semph_n, uint32_t core_id)
 {
     uint32_t val;
     val = CIDU_GetSemaphoreStatus(semph_n);
@@ -381,7 +383,7 @@ __STATIC_FORCEINLINE long CIDU_CheckSemaphoreAcquired(uint32_t semph_n, uint32_t
  * - \ref CIDU_CheckSemaphoreAcquired
  * - \ref CIDU_ReleaseSemaphore
 */
-__STATIC_FORCEINLINE long CIDU_AcquireSemaphore(uint32_t semph_n, uint32_t core_id)
+__STATIC_INLINE long CIDU_AcquireSemaphore(uint32_t semph_n, uint32_t core_id)
 {
     long semaphore_status = -1;
     uint32_t* addr = (uint32_t*)CIDU_SEMAPHORE_ADDR(semph_n);
@@ -403,7 +405,7 @@ __STATIC_FORCEINLINE long CIDU_AcquireSemaphore(uint32_t semph_n, uint32_t core_
  * - \ref CIDU_AcquireSemaphore
  * - \ref CIDU_ReleaseSemaphore
 */
-__STATIC_FORCEINLINE void CIDU_AcquireSemaphore_Block(uint32_t semph_n, uint32_t core_id)
+__STATIC_INLINE void CIDU_AcquireSemaphore_Block(uint32_t semph_n, uint32_t core_id)
 {
     int32_t semaphore_status = -1;
 
@@ -430,6 +432,8 @@ __STATIC_FORCEINLINE void CIDU_ReleaseSemaphore(uint32_t semph_n)
     __SW(addr, 0xFFFFFFFF);
 }
 /** @} */ /* End of Doxygen Group NMSIS_Core_Semaphore */
+
+/** @} */ /* End of Doxygen Group NMSIS_Core_CIDU_Functions */
 #endif /* defined(__CIDU_PRESENT) && (__CIDU_PRESENT == 1) */
 
 #ifdef __cplusplus

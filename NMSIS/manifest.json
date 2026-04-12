@@ -1,0 +1,9 @@
+{
+  "upstream_repo": "https://github.com/Nuclei-Software/NMSIS.git",
+  "tag": "1.5.0",
+  "commit": "641b270fc87a54c2f98a6015b56c2bc090b772fa",
+  "arch": "rv32imafdc",
+  "abi": "ilp32d",
+  "toolchain": "riscv64-unknown-elf-gcc (g47ade337c) 14.2.1 20240816",
+  "dsp": false
+}
