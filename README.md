@@ -90,7 +90,7 @@ Edit `setup_config.sh` and set `NUCLEI_TOOL_ROOT` to your local Nuclei toolchain
 
 Example:
 
-```sh
+```bash
 NUCLEI_TOOL_ROOT=/path/to/nuclei/toolchain
 ```
 
@@ -151,18 +151,6 @@ export NUCLEI_TOOL_ROOT=/path/to/nuclei/toolchain
 
 The root `Makefile` is the intended CLI entrypoint.
 
-### Show root help
-
-```bash
-make
-```
-
-or
-
-```bash
-make help
-```
-
 ### Build one application
 
 ```bash
@@ -205,7 +193,7 @@ make buildall
 
 `buildall` and `cleanall` scan both `application/` and `tests/`.
 
-## Download And Debug
+## Download and Debug
 
 Examples:
 
@@ -216,11 +204,29 @@ make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld run_gdb
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld debug
 ```
 
-These commands depend on:
+### Building and using [`riscv-openocd`](https://github.com/PAICookers/riscv-openocd)
 
-- a valid toolchain environment
-- board/OpenOCD configuration under `SoC/`
-- linker scripts under `SoC/`
+For the current PAIRV SoC, upstream/OpenOCD packages are not sufficient. Use the PAIRV-maintained fork instead.
+
+```bash
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld OPENOCD=<path/to/riscv-openocd/bin/openocd> upload
+```
+
+Direct flash probe smoke test:
+
+```bash
+/path/to/riscv-openocd/bin/openocd \
+  -c 'set BOOT_HARTID 0; gdb port disabled; tcl port disabled; telnet port disabled' \
+  -f SoC/evalsoc/Board/nuclei_fpga_eval/openocd_evalsoc.cfg \
+  -c 'flash banks; flash probe 0; shutdown'
+```
+
+A successful probe should:
+
+- connect to the PAIRV target and list `flash bank 0`
+- report the board flash as Winbond `w25q01nw`
+- show JEDEC ID `0x002160ef`
+- exit cleanly after `shutdown`
 
 ## Main Application Notes
 
