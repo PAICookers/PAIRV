@@ -36,6 +36,10 @@ extern "C"
 // NOTE: this cpufeature.h header file is introduced in Nuclei SDK 0.6.0
 #include "cpufeature.h"
 
+#ifndef SOC_DEBUG_UART_BAUDRATE
+#define SOC_DEBUG_UART_BAUDRATE 3000000U
+#endif
+
   /** @addtogroup Nuclei
    * @{
    */

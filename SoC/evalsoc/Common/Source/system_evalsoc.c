@@ -995,7 +995,7 @@ uint32_t core_exception_handler_s(unsigned long scause, unsigned long sp)
         }
 #endif
         SystemCoreClock = get_cpu_freq();
-        uart_init(SOC_DEBUG_UART, 3000000);
+        uart_init(SOC_DEBUG_UART, SOC_DEBUG_UART_BAUDRATE);
         /* Display banner after UART initialized */
         SystemBannerPrint();
         /* Initialize exception default handlers */
