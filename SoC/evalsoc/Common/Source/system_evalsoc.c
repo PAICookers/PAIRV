@@ -39,6 +39,10 @@
 #define SYSTEM_CLOCK (408000000UL)
 #endif
 
+#ifndef EVALSOC_QSPI_FLASH_SCKDIV
+#define EVALSOC_QSPI_FLASH_SCKDIV (3U)
+#endif
+
 /**
  * \defgroup  NMSIS_Core_SystemConfig       System Device Configuration
  * \brief Functions for system and clock setup available in system_<device>.c.
@@ -193,6 +197,14 @@ void SystemCoreClockUpdate(void) /* Get Core Clock Frequency */
      * Note: This function can be used to retrieve the system core clock frequeny
      *    after user changed register settings.
      */
+}
+
+/**
+ * \brief      Function to Initialize the QSPI Flash.
+*/
+void evalsoc_qspi_flash_init(void)
+{
+    QSPI0->SCKDIV = EVALSOC_QSPI_FLASH_SCKDIV;
 }
 
 /**
@@ -976,8 +988,12 @@ uint32_t core_exception_handler_s(unsigned long scause, unsigned long sp)
 
     if (hartid == BOOT_HARTID)
     { // only required for boot hartid
-        // TODO implement get_cpu_freq function to get real cpu clock freq in HZ or directly give the real cpu HZ
-        // TODO you can directly give the correct cpu frequency here, if you know it without call get_cpu_freq function
+#if defined(DOWNLOAD_MODE)
+        if ((DOWNLOAD_MODE == DOWNLOAD_MODE_FLASHXIP) ||
+            (DOWNLOAD_MODE == DOWNLOAD_MODE_ILMFLASHXIP)) {
+            evalsoc_qspi_flash_init();
+        }
+#endif
         SystemCoreClock = get_cpu_freq();
         uart_init(SOC_DEBUG_UART, 3000000);
         /* Display banner after UART initialized */
