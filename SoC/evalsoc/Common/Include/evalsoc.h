@@ -57,6 +57,7 @@ extern "C"
     DOWNLOAD_MODE_DDR = 3,      /*!< ddr download mode */
     DOWNLOAD_MODE_SRAM = 4,     /*!< sram download mode */
     DOWNLOAD_MODE_SRAMXIP = 5,  /*!< sramxip download mode */
+    DOWNLOAD_MODE_ILMFLASHXIP = 6, /*!< ilmflashxip download mode */
     DOWNLOAD_MODE_MAX,
   } DownloadMode_Type;
 

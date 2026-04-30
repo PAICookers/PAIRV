@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 /******************************************************************************
- * @file     gcc_evalsoc_hybrid.ld
+ * @file     gcc_evalsoc_ilmflashxip.ld
  * @brief    GNU Linker Script for Nuclei N/NX based device in Hybrid Mode
  *           (Almost everything in ILM, only huge constants in Flash)
  * @version  V1.0.0
@@ -116,7 +116,7 @@ SECTIONS
     *(.rdata)
     *(.rodata .rodata.*)
     *(.gnu.linkonce.r.*)
-    
+
     /* RT-Thread相关符号表也放在ILM中 */
     . = ALIGN(8);
     __rt_init_start = .;
@@ -153,7 +153,7 @@ SECTIONS
   PROVIDE( _rodata_lma = LOADADDR(.rodata) );
   PROVIDE( _rodata = ADDR(.rodata) );
   PROVIDE( _erodata = . );
-  
+
   PROVIDE( _large_const_lma = LOADADDR(.large_const) );
   PROVIDE( _large_const = ADDR(.large_const) );
   PROVIDE( _elarge_const = . );
