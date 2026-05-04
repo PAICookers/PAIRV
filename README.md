@@ -21,6 +21,7 @@ Other directories in the repository are not part of the primary CLI build flow.
 - Reusable PAIRV library code for logging and NICE-related helpers
 - Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, NMSIS-NN smoke validation, debug logging, and EmbeddedProto flash assets
 - FreeRTOS sample applications
+- RT-Thread Nano sample applications
 - Baremetal test applications under `tests/`
 - Local SoC integration for the current platform, including startup code, linker scripts, and board configuration
 
@@ -42,7 +43,9 @@ PAIRV/
 │   ├── benchmark/
 │   │   ├── coremark/
 │   │   └── dhrystone/
-│   └── freertos/
+│   ├── freertos/
+│   │   └── demo/
+│   └── rtthread/
 │       └── demo/
 ├── Build/
 ├── NMSIS/
@@ -52,11 +55,13 @@ PAIRV/
 │   ├── build.mk
 │   └── manifest.json
 ├── OS/
+│   ├── FreeRTOS/
+│   └── RTThread/
 ├── SoC/
 ├── tests/
 │   └── utils/
 ├── third_party/
-│   └── EmbeddedProto/
+│   ├── EmbeddedProto/
 │   └── NMSIS/
 ├── Makefile
 ├── setup.sh
@@ -161,6 +166,7 @@ make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/uart all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/proto_flash all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/simple_nn all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/freertos/demo all
+make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/rtthread/demo all
 ```
 
 ### Inspect configuration
@@ -297,3 +303,15 @@ Constraints:
 ### `application/freertos/demo`
 
 Basic FreeRTOS demo for the current platform.
+
+### `application/rtthread/demo`
+
+Basic RT-Thread Nano demo for the current platform.
+
+Notes:
+
+- uses `RTOS=RTThread`
+- builds against the local `OS/RTThread` package
+- the integrated RT-Thread Nano kernel is version `4.1.1`
+- optional FinSH/MSH sources are available under `OS/RTThread/components/finsh`
+- the demo currently enables the MSH build path with `RTTHREAD_MSH := 1`

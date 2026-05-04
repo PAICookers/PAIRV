@@ -1,0 +1,45 @@
+## Package Base Information
+name: osp-nsdk_rtthread
+version: 3.1.5
+owner: nuclei
+description: RT-Thread Nano Port Package for Nuclei SDK
+type: osp
+keywords:
+  - rtos
+  - risc-v
+license: Apache-2.0
+homepage: https://github.com/RT-Thread/rtthread-nano
+
+## Package Dependency
+dependencies:
+  - name: sdk-nuclei_sdk
+    version:
+
+## Package Configurations
+configuration:
+  rtthread_msh:
+    default_value: 0
+    type: checkbox
+    global: false
+    description: Select RT-Thread MSH Component
+
+## Source Code Management
+codemanage:
+  installdir: RTThread
+  copyfiles:
+    - path: ["src", "include"]
+    - path: ["libcpu/risc-v/nuclei/gcc", "libcpu/risc-v/nuclei/cpuport.c", "libcpu/risc-v/nuclei/cpuport.h"]
+    - path: ["components/finsh"]
+      condition: $( ${rtthread_msh} == 1 )
+  incdirs:
+    - path: ["include"]
+    - path: ["components/finsh"]
+      condition: $( ${rtthread_msh} == 1 )
+  libdirs:
+  ldlibs:
+
+## Build Configuration
+buildconfig:
+  - type: common
+    common_defines:
+      - defines: RTOS_RTTHREAD
