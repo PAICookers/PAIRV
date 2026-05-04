@@ -5,7 +5,7 @@ PAIRV is a CLI-oriented application project for a custom Nuclei `N307FD`-based R
 The active build flow is defined by the local SDK-style tree in:
 
 - `application/`
-- `common/`
+- `Lib/`
 - `Build/`
 - `NMSIS/`
 - `OS/`
@@ -18,7 +18,7 @@ Other directories in the repository are not part of the primary CLI build flow.
 ## What This Project Provides
 
 - A local Nuclei-style build system that can build applications directly from the command line
-- Reusable common code for logging and NICE-related helpers
+- Reusable PAIRV library code for logging and NICE-related helpers
 - Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, NMSIS-NN smoke validation, debug logging, and EmbeddedProto flash assets
 - FreeRTOS sample applications
 - Baremetal test applications under `tests/`
@@ -28,7 +28,7 @@ Other directories in the repository are not part of the primary CLI build flow.
 
 ```text
 PAIRV/
-├── common/
+├── Lib/
 │   ├── rv_debug.{h,c}
 │   └── rv_nice/
 ├── application/
@@ -236,7 +236,7 @@ Simple bring-up example for startup, console output, and base platform verificat
 
 ### `application/baremetal/debug_demo`
 
-Minimal demo for the shared `common/rv_debug.{h,c}` logging helper.
+Minimal demo for the shared `Lib/rv_debug.{h,c}` logging helper.
 
 ### `application/baremetal/nice`
 
@@ -246,6 +246,26 @@ Constraints:
 
 - links with `-lm`
 - requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- uses the shared `Lib/rv_nice/rv_nice_primitives.h` interface directly
+- follows the PAIRV NICE runtime policy:
+  - NICE use-state defaults to off before `main`
+  - the application explicitly calls `RV_NICE_ENABLE()` before issuing NICE instructions
+  - the application calls `RV_NICE_DISABLE()` when finished
+- generates its demo input data at runtime rather than storing a giant static input table
+- prints a bounded sample plus max-absolute-difference summaries for NICE-vs-CPU comparison, instead of dumping every element to UART
+
+## Shared Library Layer
+
+`Lib/` is a shared build/include layer for PAIRV applications.
+
+- `Build/Makefile.conf` includes `Lib/build.mk`
+- headers under `Lib/` are available to all applications through the common build path
+- C sources placed directly under `Lib/` are compiled as shared PAIRV library code
+
+Current examples:
+
+- `Lib/rv_debug.{h,c}`: shared debug/logging helper
+- `Lib/rv_nice/rv_nice_primitives.h`: shared NICE primitive wrappers and runtime state helpers
 
 ### `application/baremetal/uart`
 
