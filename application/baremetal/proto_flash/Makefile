@@ -10,9 +10,9 @@ PROTO_HDR := $(patsubst $(PROTO_DIR)/%.proto,$(PROTO_GEN_DIR)/%.h,$(PROTO_FILES)
 EMBEDDED_PROTO_DIR = $(NUCLEI_SDK_ROOT)/third_party/EmbeddedProto
 PROTOC_GEN_EAMS = $(EMBEDDED_PROTO_DIR)/protoc-gen-eams
 
-SRCDIRS = . $(EMBEDDED_PROTO_DIR)/src ../../../common
+SRCDIRS = . $(EMBEDDED_PROTO_DIR)/src
 
-INCDIRS = . $(PROTO_GEN_DIR) $(EMBEDDED_PROTO_DIR)/src ../../../common
+INCDIRS = . $(PROTO_GEN_DIR) $(EMBEDDED_PROTO_DIR)/src
 
 COMMON_FLAGS := -Os
 

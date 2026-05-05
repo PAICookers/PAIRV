@@ -1,5 +1,6 @@
 PAIRV_SDK_LIB ?= $(NUCLEI_SDK_ROOT)/Lib
-PAIRV_SDK_LIB_DIRS := $(sort $(shell find $(PAIRV_SDK_LIB) -type d))
+PAIRV_SDK_LIB_SRCS := $(sort $(wildcard $(PAIRV_SDK_LIB)/*.c))
 
-INCDIRS += $(PAIRV_SDK_LIB_DIRS)
+INCDIRS += $(PAIRV_SDK_LIB)
 C_SRCDIRS += $(PAIRV_SDK_LIB)
+C_SRCS += $(PAIRV_SDK_LIB_SRCS)

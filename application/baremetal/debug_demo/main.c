@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 #include "nuclei_sdk_soc.h"
-#include "rv_debug.h"
+#include "debug.h"
 
 #define APP_TITLE "debug_demo"
 

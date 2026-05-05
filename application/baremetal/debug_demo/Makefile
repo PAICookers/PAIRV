@@ -2,9 +2,9 @@ TARGET = debug_demo
 
 NUCLEI_SDK_ROOT = ../../..
 
-SRCDIRS = . src ../../../common
+SRCDIRS = . src
 
-INCDIRS = . inc ../../../common
+INCDIRS = . inc
 
 COMMON_FLAGS := -O0
 

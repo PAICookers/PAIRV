@@ -1,4 +1,4 @@
-#include "rv_debug.h"
+#include "debug.h"
 
 #include <stdarg.h>
 #include <stdio.h>

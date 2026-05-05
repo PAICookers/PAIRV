@@ -1,4 +1,4 @@
-#include "rv_nice_primitives.h"
+#include "nice_primitives.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
