@@ -163,8 +163,8 @@ extern "C"
 
 /* UART0 Interrupt */
 #define UART0_IRQn SOC_INT46_IRQn
-/* SNN   Interrupt */
-#define SNN_IRQn SOC_INT47_IRQn
+/* PAICORE NoC RX Interrupt */
+#define PAICORE_NOC_IRQn SOC_INT47_IRQn
 /* QSPI Interrupt */
 #define QSPI0_IRQn SOC_INT48_IRQn
 #define QSPI1_IRQn SOC_INT49_IRQn

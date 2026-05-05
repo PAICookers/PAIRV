@@ -49,7 +49,7 @@
     .weak eclic_msip_handler
     .weak eclic_mtip_handler
     .weak eclic_uart0_int_handler
-    .weak SNN_IRQHandler
+    .weak paicore_noc_handler
     .weak eclic_inter_core_int_handler
     .globl vector_base
     .type vector_base, @object
@@ -120,7 +120,7 @@ vector_base:
     DECLARE_INT_HANDLER     default_intexc_handler          /* 44: Interrupt 44 */
     DECLARE_INT_HANDLER     default_intexc_handler          /* 45: Interrupt 45 */
     DECLARE_INT_HANDLER     eclic_uart0_int_handler         /* 46: Interrupt 46 */
-    DECLARE_INT_HANDLER     SNN_IRQHandler                  /* 47: Interrupt 47 */
+    DECLARE_INT_HANDLER     paicore_noc_handler             /* 47: Interrupt 47 */
 
     DECLARE_INT_HANDLER     default_intexc_handler          /* 48: Interrupt 48 */
     DECLARE_INT_HANDLER     default_intexc_handler          /* 49: Interrupt 49 */

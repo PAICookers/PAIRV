@@ -18,7 +18,7 @@ Other directories in the repository are not part of the primary CLI build flow.
 ## What This Project Provides
 
 - A local Nuclei-style build system that can build applications directly from the command line
-- Reusable PAIRV library code for logging and NICE-related helpers
+- Reusable PAIRV library code for logging, PAICORE NoC IRQ reuse, bare-metal ring buffering, and NICE-related helpers
 - Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, NMSIS-NN smoke validation, debug logging, and EmbeddedProto flash assets
 - FreeRTOS sample applications
 - RT-Thread Nano sample applications
@@ -30,8 +30,10 @@ Other directories in the repository are not part of the primary CLI build flow.
 ```text
 PAIRV/
 ├── Lib/
-│   ├── rv_debug.{h,c}
-│   └── rv_nice/
+│   ├── debug.{h,c}
+│   ├── paicore_noc.{h,c}
+│   ├── ringbuf.{h,c}
+│   └── nice_primitives.h
 ├── application/
 │   ├── baremetal/
 │   │   ├── debug_demo/
@@ -242,7 +244,7 @@ Simple bring-up example for startup, console output, and base platform verificat
 
 ### `application/baremetal/debug_demo`
 
-Minimal demo for the shared `Lib/rv_debug.{h,c}` logging helper.
+Minimal demo for the shared `Lib/debug.{h,c}` logging helper.
 
 ### `application/baremetal/nice`
 
@@ -252,7 +254,7 @@ Constraints:
 
 - links with `-lm`
 - requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
-- uses the shared `Lib/rv_nice/rv_nice_primitives.h` interface directly
+- uses the shared `Lib/nice_primitives.h` interface directly
 - follows the PAIRV NICE runtime policy:
   - NICE use-state defaults to off before `main`
   - the application explicitly calls `RV_NICE_ENABLE()` before issuing NICE instructions
@@ -270,8 +272,10 @@ Constraints:
 
 Current examples:
 
-- `Lib/rv_debug.{h,c}`: shared debug/logging helper
-- `Lib/rv_nice/rv_nice_primitives.h`: shared NICE primitive wrappers and runtime state helpers
+- `Lib/debug.{h,c}`: shared debug/logging helper
+- `Lib/paicore_noc.{h,c}`: shared PAICORE NoC IRQ/runtime scaffold
+- `Lib/ringbuf.{h,c}`: no-malloc byte ring buffer for bare-metal stream buffering
+- `Lib/nice_primitives.h`: shared NICE primitive wrappers and runtime state helpers
 
 ### `application/baremetal/uart`
 
