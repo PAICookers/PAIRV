@@ -15,8 +15,8 @@ static uint32_t rv_ringbuf_next_index(const rv_ringbuf_t *rb, uint32_t index)
     return index;
 }
 
-int32_t rv_ringbuf_init(rv_ringbuf_t *rb, uint8_t *storage,
-                        uint32_t storage_size)
+rv_ringbuf_status_t rv_ringbuf_init(rv_ringbuf_t *rb, uint8_t *storage,
+                                    uint32_t storage_size)
 {
     if (rb == NULL || storage == NULL || storage_size < 2U) {
         return RV_RINGBUF_ERR_INVALID;
@@ -36,7 +36,7 @@ void rv_ringbuf_reset(rv_ringbuf_t *rb)
     }
 }
 
-int32_t rv_ringbuf_put(rv_ringbuf_t *rb, uint8_t byte)
+rv_ringbuf_status_t rv_ringbuf_put(rv_ringbuf_t *rb, uint8_t byte)
 {
     if (!rv_ringbuf_is_valid(rb)) {
         return RV_RINGBUF_ERR_INVALID;
@@ -53,7 +53,7 @@ int32_t rv_ringbuf_put(rv_ringbuf_t *rb, uint8_t byte)
     return RV_RINGBUF_OK;
 }
 
-int32_t rv_ringbuf_get(rv_ringbuf_t *rb, uint8_t *byte)
+rv_ringbuf_status_t rv_ringbuf_get(rv_ringbuf_t *rb, uint8_t *byte)
 {
     if (!rv_ringbuf_is_valid(rb) || byte == NULL) {
         return RV_RINGBUF_ERR_INVALID;
