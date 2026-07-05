@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,13 +6,17 @@
 
 #include "frames.h"
 #include "nuclei_sdk_soc.h"
-#include "paicore_noc.h"
 #include "ringbuf.h"
 #include "uart_app.h"
 
-#define UART_RX_BUF_CAPACITY        512U
-#define UART_RX_BUF_STORAGE_SIZE    (UART_RX_BUF_CAPACITY + 1U)
-#define UART_FIFO_WATERMARK         1U
+#define UART_RX_BUF_CAPACITY 512U
+#define UART_RX_BUF_STORAGE_SIZE (UART_RX_BUF_CAPACITY + 1U)
+#define UART_FIFO_WATERMARK 1U
+#define UART_APP_NOC_COMPLETE_KIND 0xEU
+#define UART_APP_NOC_KIND_OFFSET 28U
+#define UART_APP_NOC_KIND_MASK 0xFU
+#define UART_APP_NOC_IRQ_LEVEL 1U
+#define UART_APP_NOC_IRQ_PRIORITY 0U
 
 typedef struct uart_app {
     uint8_t rx_storage[UART_RX_BUF_STORAGE_SIZE];
@@ -106,15 +111,16 @@ void UART0_IRQHandler(void)
     RESTORE_IRQ_CSR_CONTEXT();
 }
 
-static void uart_app_noc_frame_handler(const rv_paicore_noc_frame_t *frame,
-                                       rv_paicore_noc_irq_state_t *irq_state,
-                                       void *ctx)
+static bool uart_app_handle_noc_frame(uint32_t high, uint32_t low,
+                                      uint32_t frame_index)
 {
-    uart_app_t *app = (uart_app_t *)ctx;
+    uart_app_t *app = &g_uart_app;
+    bool data_ready = false;
+    bool stop = false;
 
-    app->rx_frame_count = frame->index;
+    app->rx_frame_count = frame_index;
 
-    if (frame->index == 1U) {
+    if (frame_index == 1U) {
         app->compute_end_cycles = __get_rv_cycle();
         printf("\n[SNN] ENTER INTERRUPT\n");
     }
@@ -123,25 +129,52 @@ static void uart_app_noc_frame_handler(const rv_paicore_noc_frame_t *frame,
      * - wait for a finish frame after config/control traffic
      * - wait for an exact frame count after a user-triggered test frame */
     if (app->expected_rx_frames == 0U) {
-        if (((frame->high >> 28) & 0xFU) == 0xEU) {
-            irq_state->finish_count = 1U;
-            irq_state->data_ready = true;
-            irq_state->stop = true;
+        if (((high >> UART_APP_NOC_KIND_OFFSET) & UART_APP_NOC_KIND_MASK) ==
+            UART_APP_NOC_COMPLETE_KIND) {
+            data_ready = true;
+            stop = true;
         }
-    } else if (frame->index >= app->expected_rx_frames) {
+    } else if (frame_index >= app->expected_rx_frames) {
         app->expected_rx_frames = 0U;
-        irq_state->data_ready = true;
-        irq_state->stop = true;
+        data_ready = true;
+        stop = true;
     }
 
     printf("[SNN] Data[%u]: ", app->rx_frame_count);
-    uart_app_print_binary_64(frame->high, frame->low);
+    uart_app_print_binary_64(high, low);
 
-    if (irq_state->stop) {
-        app->rx_data_ready = irq_state->data_ready ? 1U : 0U;
+    if (stop) {
+        app->rx_data_ready = data_ready ? 1U : 0U;
         printf("[SNN] Read %u 64-bit data words\n", app->rx_frame_count);
         printf("[SNN] EXIT INTERRUPT\n");
     }
+
+    return stop;
+}
+
+void paicore_noc_handler(void)
+{
+    uint32_t frame_index = 0U;
+    bool stop = false;
+
+    SAVE_IRQ_CSR_CONTEXT();
+    noc_irq_ack();
+    noc_irq_disable();
+
+    while (!stop) {
+        uint32_t high = 0U;
+        uint32_t low = 0U;
+
+        if (noc_fifo_read_frame_words(&high, &low) != 0) {
+            break;
+        }
+
+        frame_index++;
+        stop = uart_app_handle_noc_frame(high, low, frame_index);
+    }
+
+    RESTORE_IRQ_CSR_CONTEXT();
+    noc_irq_enable();
 }
 
 int uart_app_poll_command(char *buffer, int buffer_size)
@@ -152,7 +185,7 @@ int uart_app_poll_command(char *buffer, int buffer_size)
     /* The IRQ only stores bytes. Command framing, backspace handling, and echo
      * stay in thread context so the shell flow remains deterministic. */
     uint8_t data;
-    while (rv_ringbuf_get(&g_uart_app.rx_buf, &data) == 0) {
+    while (rv_ringbuf_get(&g_uart_app.rx_buf, &data) == RV_RINGBUF_OK) {
         if (data == '\r' || data == '\n') {
             if (cmd_idx > 0) {
                 int result = cmd_idx;
@@ -433,11 +466,11 @@ int uart_app_init(void)
         return -1;
     }
 
-    /* Register the shared PAICORE NoC handler after the UART shell path so the
-     * app can both accept commands and observe returned NoC frames. */
-    rv_paicore_noc_set_frame_handler(uart_app_noc_frame_handler, &g_uart_app);
-    result = rv_paicore_noc_register_irq(ECLIC_NON_VECTOR_INTERRUPT,
-                                         ECLIC_LEVEL_TRIGGER, 1, 0);
+    /* Register this app's direct PAICORE NoC IRQ entry after the UART shell
+     * path so the app can both accept commands and observe returned frames. */
+    result = ECLIC_Register_IRQ(PAICORE_NOC_IRQn, ECLIC_NON_VECTOR_INTERRUPT,
+                                ECLIC_LEVEL_TRIGGER, UART_APP_NOC_IRQ_LEVEL,
+                                UART_APP_NOC_IRQ_PRIORITY, paicore_noc_handler);
 
     if (result != 0) {
         printf("ERROR: Failed to register NoC interrupt (code: %ld)\n",
