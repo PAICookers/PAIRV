@@ -18,8 +18,8 @@ Other directories in the repository are not part of the primary CLI build flow.
 ## What This Project Provides
 
 - A local Nuclei-style build system that can build applications directly from the command line
-- Reusable PAIRV library code for logging, PAICORE NoC IRQ reuse, bare-metal ring buffering, and NICE-related helpers
-- Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, NMSIS-NN smoke validation, debug logging, and EmbeddedProto flash assets
+- Reusable PAIRV library code for logging, runtime support, bare-metal ring buffering, and NICE-related helpers
+- Baremetal sample applications for bring-up, NICE/custom instruction validation, UART/SNN integration, NMSIS-NN smoke validation, debug logging, and FlatBuffers flash assets
 - FreeRTOS sample applications
 - RT-Thread Nano sample applications
 - Baremetal test applications under `tests/`
@@ -37,9 +37,9 @@ PAIRV/
 ├── application/
 │   ├── baremetal/
 │   │   ├── debug_demo/
+│   │   ├── flatbuffer_flash/
 │   │   ├── helloworld/
 │   │   ├── nice/
-│   │   ├── proto_flash/
 │   │   ├── simple_nn/
 │   │   └── uart/
 │   ├── benchmark/
@@ -63,7 +63,7 @@ PAIRV/
 ├── tests/
 │   └── utils/
 ├── third_party/
-│   ├── EmbeddedProto/
+│   ├── flatbuffers/
 │   └── NMSIS/
 ├── Makefile
 ├── setup.sh
@@ -83,7 +83,7 @@ Application-specific notes:
 
 - `application/baremetal/nice` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 - `application/baremetal/uart` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
-- `application/baremetal/proto_flash` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- `application/baremetal/flatbuffer_flash` only supports `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 - `application/baremetal/simple_nn` can be built with `DOWNLOAD=ilm`
 - lightweight demos such as `helloworld` and `debug_demo` can be built with `DOWNLOAD=ilm`
 
@@ -113,12 +113,6 @@ export NUCLEI_SDK_ROOT=$(pwd)
 
 ```bash
 source setup.sh
-```
-
-If you want to build the [EmbeddedProto](https://github.com/Embedded-AMS/EmbeddedProto) demo, initialize the submodule first:
-
-```bash
-git submodule update --init --recursive
 ```
 
 ## NMSIS Layout
@@ -163,9 +157,9 @@ The root `Makefile` is the intended CLI entrypoint.
 ```bash
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/debug_demo all
+make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/flatbuffer_flash all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/nice all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/uart all
-make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/proto_flash all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/simple_nn all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/freertos/demo all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/rtthread/demo all
@@ -246,6 +240,19 @@ Simple bring-up example for startup, console output, and base platform verificat
 
 Minimal demo for the shared `Lib/debug.{h,c}` logging helper.
 
+### `application/baremetal/flatbuffer_flash`
+
+Smoke test that links `fixtures/compile_artifacts.bin` into flash and reads it
+through `Lib/runtime`.
+
+Constraints:
+
+- requires `third_party/flatbuffers`
+- requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
+- consumes checked-in `fixtures/compile_artifacts.fbs` and
+  `fixtures/compile_artifacts.bin`; JSON generation fixtures are not part of
+  the board build
+
 ### `application/baremetal/nice`
 
 NICE/custom instruction example.
@@ -283,15 +290,6 @@ Board-integration-heavy application for UART, SNN-related register access, inter
 
 Constraints:
 
-- requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
-
-### `application/baremetal/proto_flash`
-
-EmbeddedProto-based demo that links a serialized protobuf asset into flash and uses the shared debug helper.
-
-Constraints:
-
-- requires `third_party/EmbeddedProto`
 - requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
 
 ### `application/baremetal/simple_nn`
