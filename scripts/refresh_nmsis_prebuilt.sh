@@ -40,6 +40,7 @@ if [[ ! -f "${SOURCE_LIB}" ]]; then
     echo "Expected library not found: ${SOURCE_LIB}" >&2
     exit 1
 fi
+riscv64-unknown-elf-strip -D -g "${SOURCE_LIB}"
 
 mkdir -p \
     "${PREBUILT_DIR}/Core/Include" \
