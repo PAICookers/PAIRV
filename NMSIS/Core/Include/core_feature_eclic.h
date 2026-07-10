@@ -33,6 +33,9 @@
  * 5. __SMODE_PRESENT:  Define whether S-Mode present, if present, ECLIC will present with S-Mode ECLIC feature
  *   * 0: Not present
  *   * 1: Present
+ * 6. __ECLIC_VER:  Optional, define the ECLIC version, if not defined, defaults to 1
+ *   * 1: ECLICv1 (default)
+ *   * 2: ECLICv2 (supports hardware context saving and shadow registers)
  *
  */
 #ifdef __cplusplus
@@ -172,6 +175,11 @@ typedef enum ECLIC_TRIGGER {
 #ifndef __ECLIC_INTCTLBITS
 /* Define __ECLIC_INTCTLBITS to get via ECLIC->INFO if not defined */
 #define __ECLIC_INTCTLBITS                  (__ECLIC_GetInfoCtlbits())
+#endif
+
+#ifndef __ECLIC_VER
+/* Define __ECLIC_VER to 1 if not defined, assume ECLICv1 by default */
+#define __ECLIC_VER                         1U
 #endif
 
 /* ECLIC Memory mapping of Device */
@@ -1090,7 +1098,7 @@ __STATIC_FORCEINLINE void __ECLIC_SetModeIRQ(IRQn_Type IRQn, uint32_t mode)
      * which can't be clear to 0 firstly, then OR it to 1
      */
     ECLIC->CTRL[IRQn].INTATTR = (uint8_t)(mode << CLIC_INTATTR_MODE_Pos) + \
-        (ECLIC->SCTRL[IRQn].INTATTR & (~CLIC_INTATTR_MODE_Msk));
+        (ECLIC->CTRL[IRQn].INTATTR & (~CLIC_INTATTR_MODE_Msk));
 }
 
 /**

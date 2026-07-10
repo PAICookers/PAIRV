@@ -117,11 +117,11 @@ typedef union {
         rv_csr_t mie:1;                         /*!< bit: 3  machine mode interrupt enable flag */
         rv_csr_t _reserved2:1;                  /*!< bit: 4  Reserved */
         rv_csr_t spie:1;                        /*!< bit: 5  supervisor mode interrupt enable flag */
-        rv_csr_t ube:1;                         /*!< bit: 6  U-mode non-instruction-fetch memory accesse big-endian enable flag */
+        rv_csr_t ube:1;                         /*!< bit: 6  U-mode non-instruction-fetch memory access big-endian enable flag */
         rv_csr_t mpie:1;                        /*!< bit: 7  machine mode previous interrupt enable flag */
-        rv_csr_t spp:1;                         /*!< bit: 8  supervisor previous privilede mode */
+        rv_csr_t spp:1;                         /*!< bit: 8  supervisor previous privilege mode */
         rv_csr_t vs:2;                          /*!< bit: 9..10  vector status flag */
-        rv_csr_t mpp:2;                         /*!< bit: 11..12 machine previous privilede mode  */
+        rv_csr_t mpp:2;                         /*!< bit: 11..12 machine previous privilege mode  */
         rv_csr_t fs:2;                          /*!< bit: 13..14 FS status flag */
         rv_csr_t xs:2;                          /*!< bit: 15..16 XS status flag */
         rv_csr_t mprv:1;                        /*!< bit: 17 Modify PRiVilege */
@@ -136,8 +136,8 @@ typedef union {
         rv_csr_t _reserved3:7;                  /*!< bit: 25..31 Reserved  */
         rv_csr_t uxl:2;                         /*!< bit: 32..33 U-mode XLEN  */
         rv_csr_t sxl:2;                         /*!< bit: 34..35 S-mode XLEN  */
-        rv_csr_t sbe:1;                         /*!< bit: 36 S-mode non-instruction-fetch memory accesse big-endian enable flag */
-        rv_csr_t mbe:1;                         /*!< bit: 37 M-mode non-instruction-fetch memory accesse big-endian enable flag */
+        rv_csr_t sbe:1;                         /*!< bit: 36 S-mode non-instruction-fetch memory access big-endian enable flag */
+        rv_csr_t mbe:1;                         /*!< bit: 37 M-mode non-instruction-fetch memory access big-endian enable flag */
         rv_csr_t gva:1;                         /*!< bit: 38 Guest Virtual Address */
         rv_csr_t mpv:1;                         /*!< bit: 39 Machine Previous Virtualization Mode */
         rv_csr_t _reserved4:1;                  /*!< bit: 40 Reserved  */
@@ -160,8 +160,8 @@ typedef union {
 typedef union {
     struct {
         rv_csr_t _reserved0:4;                  /*!< bit: 0..3  Reserved */
-        rv_csr_t sbe:1;                         /*!< bit: 4 S-mode non-instruction-fetch memory accesse big-endian enable flag */
-        rv_csr_t mbe:1;                         /*!< bit: 5 M-mode non-instruction-fetch memory accesse big-endian enable flag */
+        rv_csr_t sbe:1;                         /*!< bit: 4 S-mode non-instruction-fetch memory access big-endian enable flag */
+        rv_csr_t mbe:1;                         /*!< bit: 5 M-mode non-instruction-fetch memory access big-endian enable flag */
         rv_csr_t gva:1;                         /*!< bit: 6 Guest Virtual Address */
         rv_csr_t mpv:1;                         /*!< bit: 7 Machine Previous Virtualization Mode */
         rv_csr_t _reserved1:1;                  /*!< bit: 8 Reserved  */
@@ -337,14 +337,14 @@ typedef CSR_MCACHECTL_Type CSR_MCACHE_CTL_Type;
  */
 typedef union {
     struct {
-        rv_csr_t mpie1:1;                       /*!< bit: 0     interrupt enable flag of fisrt level NMI/exception nestting */
-        rv_csr_t mpp1:2;                        /*!< bit: 1..2  privilede mode of fisrt level NMI/exception nestting */
+        rv_csr_t mpie1:1;                       /*!< bit: 0     interrupt enable flag of first level NMI/exception nesting */
+        rv_csr_t mpp1:2;                        /*!< bit: 1..2  privilede mode of first level NMI/exception nesting */
         rv_csr_t _reserved0:3;                  /*!< bit: 3..5  Reserved */
-        rv_csr_t ptyp1:2;                       /*!< bit: 6..7  NMI/exception type of before first nestting */
-        rv_csr_t mpie2:1;                       /*!< bit: 8     interrupt enable flag of second level NMI/exception nestting */
-        rv_csr_t mpp2:2;                        /*!< bit: 9..10 privilede mode of second level NMI/exception nestting */
+        rv_csr_t ptyp1:2;                       /*!< bit: 6..7  NMI/exception type of before first nesting */
+        rv_csr_t mpie2:1;                       /*!< bit: 8     interrupt enable flag of second level NMI/exception nesting */
+        rv_csr_t mpp2:2;                        /*!< bit: 9..10 privilede mode of second level NMI/exception nesting */
         rv_csr_t _reserved1:3;                  /*!< bit: 11..13     Reserved */
-        rv_csr_t ptyp2:2;                       /*!< bit: 14..15     NMI/exception type of before second nestting */
+        rv_csr_t ptyp2:2;                       /*!< bit: 14..15     NMI/exception type of before second nesting */
         rv_csr_t _reserved2:__RISCV_XLEN-16;    /*!< bit: 16..XLEN-1 Reserved */
     } b;                                        /*!< Structure used for bit  access */
     rv_csr_t w;                                 /*!< Type      used for csr data access */
@@ -2307,9 +2307,9 @@ __STATIC_FORCEINLINE void __SD(volatile void *addr, uint64_t val)
  * \brief  Compare and Swap 32bit value using LR and SC
  * \details Compare old value with memory, if identical,
  * store new value in memory. Return the initial value in memory.
- * Success is indicated by comparing return value with OLD.
- * memory address, return 0 if successful, otherwise return !0
- * \param [in]    addr      Address pointer to data, address need to be 4byte aligned
+ * Success is indicated by comparing the return value with OLD.
+ * \param [in]    addr      Address pointer to data, address must be naturally
+ *                          aligned to 4 bytes
  * \param [in]    oldval    Old value of the data in address
  * \param [in]    newval    New value to be stored into the address
  * \return  return the initial value in memory
@@ -2333,8 +2333,10 @@ __STATIC_INLINE uint32_t __CAS_W(volatile uint32_t *addr, uint32_t oldval, uint3
 
 /**
  * \brief  Atomic Swap 32bit value into memory
- * \details Atomically swap new 32bit value into memory using amoswap.d.
- * \param [in]    addr      Address pointer to data, address need to be 4byte aligned
+ * \details Atomically swap new 32bit value into memory using amoswap.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr      Address pointer to data, address must be naturally
+ *                          aligned to 4 bytes
  * \param [in]    newval    New value to be stored into the address
  * \return  return the original value in memory
  */
@@ -2349,10 +2351,14 @@ __STATIC_FORCEINLINE uint32_t __AMOSWAP_W(volatile uint32_t *addr, uint32_t newv
 
 /**
  * \brief  Atomic Add with 32bit value
- * \details Atomically ADD 32bit value with value in memory using amoadd.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically ADD 32bit value with value in memory using amoadd.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be ADDed
- * \return  return memory value + add value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int32_t __AMOADD_W(volatile int32_t *addr, int32_t value)
 {
@@ -2360,15 +2366,19 @@ __STATIC_FORCEINLINE int32_t __AMOADD_W(volatile int32_t *addr, int32_t value)
 
     __ASM volatile ("amoadd.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic And with 32bit value
- * \details Atomically AND 32bit value with value in memory using amoand.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically AND 32bit value with value in memory using amoand.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be ANDed
- * \return  return memory value & and value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int32_t __AMOAND_W(volatile int32_t *addr, int32_t value)
 {
@@ -2376,15 +2386,19 @@ __STATIC_FORCEINLINE int32_t __AMOAND_W(volatile int32_t *addr, int32_t value)
 
     __ASM volatile ("amoand.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic OR with 32bit value
- * \details Atomically OR 32bit value with value in memory using amoor.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically OR 32bit value with value in memory using amoor.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be ORed
- * \return  return memory value | and value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int32_t __AMOOR_W(volatile int32_t *addr, int32_t value)
 {
@@ -2392,15 +2406,19 @@ __STATIC_FORCEINLINE int32_t __AMOOR_W(volatile int32_t *addr, int32_t value)
 
     __ASM volatile ("amoor.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic XOR with 32bit value
- * \details Atomically XOR 32bit value with value in memory using amoxor.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically XOR 32bit value with value in memory using amoxor.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be XORed
- * \return  return memory value ^ and value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int32_t __AMOXOR_W(volatile int32_t *addr, int32_t value)
 {
@@ -2408,15 +2426,19 @@ __STATIC_FORCEINLINE int32_t __AMOXOR_W(volatile int32_t *addr, int32_t value)
 
     __ASM volatile ("amoxor.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic unsigned MAX with 32bit value
- * \details Atomically unsigned max compare 32bit value with value in memory using amomaxu.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically unsigned max compare 32bit value with value in memory using amomaxu.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be compared
- * \return  return the bigger value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE uint32_t __AMOMAXU_W(volatile uint32_t *addr, uint32_t value)
 {
@@ -2424,15 +2446,19 @@ __STATIC_FORCEINLINE uint32_t __AMOMAXU_W(volatile uint32_t *addr, uint32_t valu
 
     __ASM volatile ("amomaxu.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic signed MAX with 32bit value
- * \details Atomically signed max compare 32bit value with value in memory using amomax.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically signed max compare 32bit value with value in memory using amomax.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be compared
- * \return the bigger value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int32_t __AMOMAX_W(volatile int32_t *addr, int32_t value)
 {
@@ -2440,15 +2466,19 @@ __STATIC_FORCEINLINE int32_t __AMOMAX_W(volatile int32_t *addr, int32_t value)
 
     __ASM volatile ("amomax.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic unsigned MIN with 32bit value
- * \details Atomically unsigned min compare 32bit value with value in memory using amominu.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically unsigned min compare 32bit value with value in memory using amominu.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be compared
- * \return the smaller value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE uint32_t __AMOMINU_W(volatile uint32_t *addr, uint32_t value)
 {
@@ -2456,15 +2486,19 @@ __STATIC_FORCEINLINE uint32_t __AMOMINU_W(volatile uint32_t *addr, uint32_t valu
 
     __ASM volatile ("amominu.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic signed MIN with 32bit value
- * \details Atomically signed min compare 32bit value with value in memory using amomin.d.
- * \param [in]    addr   Address pointer to data, address need to be 4byte aligned
+ * \details Atomically signed min compare 32bit value with value in memory using amomin.w.
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ *          On RV64, the hardware sign-extends the word written to rd; this
+ *          API returns the 32-bit value.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 4 bytes
  * \param [in]    value  value to be compared
- * \return  the smaller value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int32_t __AMOMIN_W(volatile int32_t *addr, int32_t value)
 {
@@ -2472,7 +2506,7 @@ __STATIC_FORCEINLINE int32_t __AMOMIN_W(volatile int32_t *addr, int32_t value)
 
     __ASM volatile ("amomin.w %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 #if __RISCV_XLEN == 64
@@ -2480,9 +2514,9 @@ __STATIC_FORCEINLINE int32_t __AMOMIN_W(volatile int32_t *addr, int32_t value)
  * \brief  Compare and Swap 64bit value using LR and SC
  * \details Compare old value with memory, if identical,
  * store new value in memory. Return the initial value in memory.
- * Success is indicated by comparing return value with OLD.
- * memory address, return 0 if successful, otherwise return !0
- * \param [in]    addr      Address pointer to data, address need to be 8byte aligned
+ * Success is indicated by comparing the return value with OLD.
+ * \param [in]    addr      Address pointer to data, address must be naturally
+ *                          aligned to 8 bytes
  * \param [in]    oldval    Old value of the data in address
  * \param [in]    newval    New value to be stored into the address
  * \return  return the initial value in memory
@@ -2507,7 +2541,9 @@ __STATIC_INLINE uint64_t __CAS_D(volatile uint64_t *addr, uint64_t oldval, uint6
 /**
  * \brief  Atomic Swap 64bit value into memory
  * \details Atomically swap new 64bit value into memory using amoswap.d.
- * \param [in]    addr      Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr      Address pointer to data, address must be naturally
+ *                          aligned to 8 bytes
  * \param [in]    newval    New value to be stored into the address
  * \return  return the original value in memory
  */
@@ -2523,9 +2559,11 @@ __STATIC_FORCEINLINE uint64_t __AMOSWAP_D(volatile uint64_t *addr, uint64_t newv
 /**
  * \brief  Atomic Add with 64bit value
  * \details Atomically ADD 64bit value with value in memory using amoadd.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be ADDed
- * \return  return memory value + add value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int64_t __AMOADD_D(volatile int64_t *addr, int64_t value)
 {
@@ -2533,15 +2571,17 @@ __STATIC_FORCEINLINE int64_t __AMOADD_D(volatile int64_t *addr, int64_t value)
 
     __ASM volatile ("amoadd.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic And with 64bit value
  * \details Atomically AND 64bit value with value in memory using amoand.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be ANDed
- * \return  return memory value & and value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int64_t __AMOAND_D(volatile int64_t *addr, int64_t value)
 {
@@ -2549,15 +2589,17 @@ __STATIC_FORCEINLINE int64_t __AMOAND_D(volatile int64_t *addr, int64_t value)
 
     __ASM volatile ("amoand.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic OR with 64bit value
  * \details Atomically OR 64bit value with value in memory using amoor.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be ORed
- * \return  return memory value | and value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int64_t __AMOOR_D(volatile int64_t *addr, int64_t value)
 {
@@ -2565,15 +2607,17 @@ __STATIC_FORCEINLINE int64_t __AMOOR_D(volatile int64_t *addr, int64_t value)
 
     __ASM volatile ("amoor.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic XOR with 64bit value
  * \details Atomically XOR 64bit value with value in memory using amoxor.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be XORed
- * \return  return memory value ^ and value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int64_t __AMOXOR_D(volatile int64_t *addr, int64_t value)
 {
@@ -2581,15 +2625,17 @@ __STATIC_FORCEINLINE int64_t __AMOXOR_D(volatile int64_t *addr, int64_t value)
 
     __ASM volatile ("amoxor.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic unsigned MAX with 64bit value
  * \details Atomically unsigned max compare 64bit value with value in memory using amomaxu.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be compared
- * \return  return the bigger value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE uint64_t __AMOMAXU_D(volatile uint64_t *addr, uint64_t value)
 {
@@ -2597,15 +2643,17 @@ __STATIC_FORCEINLINE uint64_t __AMOMAXU_D(volatile uint64_t *addr, uint64_t valu
 
     __ASM volatile ("amomaxu.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic signed MAX with 64bit value
  * \details Atomically signed max compare 64bit value with value in memory using amomax.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be compared
- * \return the bigger value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int64_t __AMOMAX_D(volatile int64_t *addr, int64_t value)
 {
@@ -2613,15 +2661,17 @@ __STATIC_FORCEINLINE int64_t __AMOMAX_D(volatile int64_t *addr, int64_t value)
 
     __ASM volatile ("amomax.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic unsigned MIN with 64bit value
  * \details Atomically unsigned min compare 64bit value with value in memory using amominu.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be compared
- * \return the smaller value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE uint64_t __AMOMINU_D(volatile uint64_t *addr, uint64_t value)
 {
@@ -2629,15 +2679,17 @@ __STATIC_FORCEINLINE uint64_t __AMOMINU_D(volatile uint64_t *addr, uint64_t valu
 
     __ASM volatile ("amominu.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 
 /**
  * \brief  Atomic signed MIN with 64bit value
  * \details Atomically signed min compare 64bit value with value in memory using amomin.d.
- * \param [in]    addr   Address pointer to data, address need to be 8byte aligned
+ *          This helper uses a plain AMO without aq/rl ordering bits.
+ * \param [in]    addr   Address pointer to data, address must be naturally
+ *                       aligned to 8 bytes
  * \param [in]    value  value to be compared
- * \return  the smaller value
+ * \return  return the original value in memory
  */
 __STATIC_FORCEINLINE int64_t __AMOMIN_D(volatile int64_t *addr, int64_t value)
 {
@@ -2645,7 +2697,7 @@ __STATIC_FORCEINLINE int64_t __AMOMIN_D(volatile int64_t *addr, int64_t value)
 
     __ASM volatile ("amomin.d %0, %2, %1" : \
             "=r"(result), "+A"(*addr) : "r"(value) : "memory");
-    return *addr;
+    return result;
 }
 #endif /* __RISCV_XLEN == 64  */
 
