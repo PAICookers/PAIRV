@@ -55,21 +55,4 @@ cp -a "${UPSTREAM_NMSIS_DIR}/NN/Include/." "${PREBUILT_DIR}/NN/Include/"
 cp "${UPSTREAM_NMSIS_DIR}/build.mk" "${PREBUILT_DIR}/build.mk"
 cp "${SOURCE_LIB}" "${PREBUILT_DIR}/Library/NN/GCC/${LIB_NAME}"
 
-UPSTREAM_REPO_URL="$(git -C "${UPSTREAM_REPO_DIR}" remote get-url origin)"
-UPSTREAM_COMMIT="$(git -C "${UPSTREAM_REPO_DIR}" rev-parse HEAD)"
-UPSTREAM_TAG="$(git -C "${UPSTREAM_REPO_DIR}" describe --tags --exact-match 2>/dev/null || git -C "${UPSTREAM_REPO_DIR}" describe --tags --always)"
-TOOLCHAIN_VERSION="$(riscv64-unknown-elf-gcc --version | head -n 1)"
-
-cat > "${PREBUILT_DIR}/manifest.json" <<EOF
-{
-  "upstream_repo": "${UPSTREAM_REPO_URL}",
-  "tag": "${UPSTREAM_TAG}",
-  "commit": "${UPSTREAM_COMMIT}",
-  "arch": "${ARCH}",
-  "abi": "${ABI}",
-  "toolchain": "${TOOLCHAIN_VERSION}",
-  "dsp": false
-}
-EOF
-
 echo "Refreshed prebuilt NMSIS mirror at ${PREBUILT_DIR}"
