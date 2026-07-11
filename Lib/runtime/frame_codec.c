@@ -64,6 +64,7 @@ static const dtype_info_t k_dtype_info[] = {
     [RVRT_DTYPE_UINT8] = {8U, false}, [RVRT_DTYPE_INT8] = {8U, true},
 };
 
+/** @brief Collapse artifact-reader failures into the codec status domain. */
 static rvrt_status_t runtime_status_from_artifact(rvrt_artifact_status_t status)
 {
     if (status == RVRT_ARTIFACT_OK) {
@@ -160,6 +161,11 @@ static rvrt_status_t frame_dest(uint32_t header,
     return RVRT_STATUS_OK;
 }
 
+/**
+ * @brief Build a PAICORE control frame addressed to an artifact thread root.
+ *
+ * payload occupies the low 24 bits; callers must use a control header value.
+ */
 static rvrt_status_t build_control_frame(const rvrt_artifact_t *artifact,
                                          uint32_t thread_index, uint32_t header,
                                          uint32_t payload, rvrt_frame_t *frame)
@@ -212,14 +218,44 @@ static bool dtype_bits(uint32_t dtype, uint32_t *bits, bool *is_signed)
 
 static uint32_t bit_mask(uint32_t bits) { return (1U << bits) - 1U; }
 
-static uint32_t dtype_max_value(uint32_t bits, bool is_signed)
+static bool encode_payload(uint8_t raw_value, uint32_t bits, bool is_signed,
+                           uint8_t *payload)
 {
-    if (is_signed) {
-        return (1U << (bits - 1U)) - 1U;
+    if (payload == NULL) {
+        return false;
     }
-    return bit_mask(bits);
+
+    const uint32_t mask = bit_mask(bits);
+    if (!is_signed) {
+        if (((uint32_t)raw_value & ~mask) != 0U) {
+            return false;
+        }
+        *payload = raw_value;
+        return true;
+    }
+
+    const int32_t value = ((raw_value & 0x80U) != 0U)
+                              ? (int32_t)raw_value - 0x100
+                              : (int32_t)raw_value;
+    const int32_t extent = (int32_t)(1U << (bits - 1U));
+    if ((value < -extent) || (value >= extent)) {
+        return false;
+    }
+    *payload = (uint8_t)((uint32_t)value & mask);
+    return true;
 }
 
+static uint8_t decode_payload(uint32_t payload, uint32_t bits, bool is_signed)
+{
+    const uint32_t mask = bit_mask(bits);
+    uint32_t value = payload & mask;
+    if (is_signed && ((value & (1U << (bits - 1U))) != 0U)) {
+        value |= ~mask;
+    }
+    return (uint8_t)value;
+}
+
+/** @brief Encode one nonzero input entry as an offline work-type-1 frame. */
 static rvrt_status_t build_work1_frame(const rvrt_artifact_input_entry_t *entry,
                                        uint32_t timestep, uint8_t payload,
                                        rvrt_frame_t *frame)
@@ -286,28 +322,24 @@ rvrt_status_t rvrt_build_sync_frame(const rvrt_artifact_t *artifact,
                                runtime.sync_steps, frame);
 }
 
-void rvrt_input_cursor_init(rvrt_input_cursor_t *cursor, uint32_t thread_index,
-                            uint32_t input_index, uint32_t timestep)
+void rvrt_input_cursor_init(rvrt_input_cursor_t *cursor, uint32_t timestep)
 {
     if (cursor == NULL) {
         return;
     }
 
-    cursor->thread_index = thread_index;
-    cursor->input_index = input_index;
     cursor->entry_index = 0U;
     cursor->timestep = timestep;
 }
 
-rvrt_status_t rvrt_encode_input_chunk(const rvrt_artifact_t *artifact,
-                                      rvrt_input_cursor_t *cursor,
-                                      const uint8_t *input, uint32_t input_size,
-                                      rvrt_frame_t *frames,
-                                      uint32_t frame_capacity,
-                                      uint32_t *frame_count)
+rvrt_status_t
+rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
+                        rvrt_input_cursor_t *cursor, const uint8_t *input,
+                        uint32_t input_size, rvrt_frame_t *frames,
+                        uint32_t frame_capacity, uint32_t *frame_count)
 {
-    if ((artifact == NULL) || (cursor == NULL) || (input == NULL) ||
-        (frames == NULL) || (frame_count == NULL)) {
+    if ((view == NULL) || (view->entries == NULL) || (cursor == NULL) ||
+        (input == NULL) || (frames == NULL) || (frame_count == NULL)) {
         return RVRT_STATUS_NULL_ARGUMENT;
     }
     if (frame_capacity == 0U) {
@@ -317,28 +349,12 @@ rvrt_status_t rvrt_encode_input_chunk(const rvrt_artifact_t *artifact,
 
     *frame_count = 0U;
 
-    uint32_t entry_count = 0U;
-    rvrt_artifact_status_t artifact_status = rvrt_artifact_input_entry_count(
-        artifact, cursor->thread_index, cursor->input_index, &entry_count);
-    rvrt_status_t status = runtime_status_from_artifact(artifact_status);
-    if (status != RVRT_STATUS_OK) {
-        return status;
-    }
-
-    uint32_t bit_width = 0U;
-    artifact_status = rvrt_artifact_input_bit_width(
-        artifact, cursor->thread_index, cursor->input_index, &bit_width);
-    status = runtime_status_from_artifact(artifact_status);
-    if (status != RVRT_STATUS_OK) {
-        return status;
-    }
-
-    while (cursor->entry_index < entry_count) {
+    while (cursor->entry_index < view->entry_count) {
         rvrt_artifact_input_entry_t entry = {0};
-        artifact_status = rvrt_artifact_input_entry(
-            artifact, cursor->thread_index, cursor->input_index,
-            cursor->entry_index, &entry);
-        status = runtime_status_from_artifact(artifact_status);
+        const rvrt_artifact_status_t artifact_status =
+            rvrt_artifact_input_mapping_entry(view, cursor->entry_index,
+                                              &entry);
+        rvrt_status_t status = runtime_status_from_artifact(artifact_status);
         if (status != RVRT_STATUS_OK) {
             return status;
         }
@@ -346,18 +362,19 @@ rvrt_status_t rvrt_encode_input_chunk(const rvrt_artifact_t *artifact,
         uint32_t entry_bits = 0U;
         bool is_signed = false;
         if (!dtype_bits(entry.dtype, &entry_bits, &is_signed) ||
-            (entry_bits != bit_width)) {
+            (entry_bits != view->bit_width)) {
             RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
                           "unsupported input dtype=%u bit_width=%u",
-                          (unsigned)entry.dtype, (unsigned)bit_width);
+                          (unsigned)entry.dtype, (unsigned)view->bit_width);
             return RVRT_STATUS_UNSUPPORTED;
         }
         if (entry.elem_idx >= input_size) {
             return RVRT_STATUS_OUT_OF_RANGE;
         }
 
-        const uint8_t payload = input[entry.elem_idx];
-        if ((uint32_t)payload > dtype_max_value(entry_bits, is_signed)) {
+        uint8_t payload = 0U;
+        if (!encode_payload(input[entry.elem_idx], entry_bits, is_signed,
+                            &payload)) {
             RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "input payload out of range");
             return RVRT_STATUS_BAD_VALUE;
         }
@@ -383,12 +400,12 @@ rvrt_status_t rvrt_encode_input_chunk(const rvrt_artifact_t *artifact,
 }
 
 rvrt_status_t
-rvrt_decode_output_frame(const rvrt_artifact_t *artifact, uint32_t thread_index,
-                         uint32_t output_index, const rvrt_frame_t *frame,
-                         uint8_t *output, uint32_t output_size, bool *written)
+rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
+                         const rvrt_frame_t *frame, uint8_t *output,
+                         uint32_t output_size, bool *written)
 {
-    if ((artifact == NULL) || (frame == NULL) || (output == NULL) ||
-        (written == NULL)) {
+    if ((view == NULL) || (view->entries == NULL) || (frame == NULL) ||
+        (output == NULL) || (written == NULL)) {
         return RVRT_STATUS_NULL_ARGUMENT;
     }
 
@@ -397,42 +414,21 @@ rvrt_decode_output_frame(const rvrt_artifact_t *artifact, uint32_t thread_index,
         return RVRT_STATUS_OK;
     }
 
-    uint32_t kind = 0U;
-    rvrt_artifact_status_t artifact_status =
-        rvrt_artifact_output_kind(artifact, thread_index, output_index, &kind);
-    rvrt_status_t status = runtime_status_from_artifact(artifact_status);
-    if (status != RVRT_STATUS_OK) {
-        return status;
-    }
-    if (kind != RVRT_OUTPUT_DATA) {
+    if (view->kind != RVRT_OUTPUT_DATA) {
         RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output kind=%u",
-                      (unsigned)kind);
+                      (unsigned)view->kind);
         return RVRT_STATUS_UNSUPPORTED;
     }
 
-    uint32_t bit_width = 0U;
-    artifact_status = rvrt_artifact_output_bit_width(artifact, thread_index,
-                                                     output_index, &bit_width);
-    status = runtime_status_from_artifact(artifact_status);
-    if (status != RVRT_STATUS_OK) {
-        return status;
-    }
-    if ((bit_width == 0U) || (bit_width > RVRT_OW1_DATA_BITS)) {
+    if ((view->bit_width == 0U) || (view->bit_width > RVRT_OW1_DATA_BITS)) {
         RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output bit_width=%u",
-                      (unsigned)bit_width);
+                      (unsigned)view->bit_width);
         return RVRT_STATUS_UNSUPPORTED;
     }
 
-    uint32_t target_lcn = 0U;
-    artifact_status =
-        rvrt_artifact_output_target_lcn(artifact, thread_index, &target_lcn);
-    status = runtime_status_from_artifact(artifact_status);
-    if (status != RVRT_STATUS_OK) {
-        return status;
-    }
-    if (target_lcn > RVRT_OW1_TARGET_LCN_MAX) {
+    if (view->target_lcn > RVRT_OW1_TARGET_LCN_MAX) {
         RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output target_lcn=%u",
-                      (unsigned)target_lcn);
+                      (unsigned)view->target_lcn);
         return RVRT_STATUS_UNSUPPORTED;
     }
 
@@ -442,67 +438,51 @@ rvrt_decode_output_frame(const rvrt_artifact_t *artifact, uint32_t thread_index,
                     << RVRT_OW1_TS_LO_BITS) |
                    ((raw_frame >> RVRT_OW1_TS_LO_OFFSET) &
                     RVRT_OW1_TS_LO_MASK));
-    const uint32_t runtime_timestep = frame_timestep >> target_lcn;
+    const uint32_t runtime_timestep = frame_timestep >> view->target_lcn;
     if (runtime_timestep != 0U) {
         return RVRT_STATUS_OK;
     }
 
     const uint32_t frame_axon =
         (uint32_t)((raw_frame >> RVRT_OW1_AXON_OFFSET) & RVRT_OW1_AXON_MASK);
-    const uint32_t ax_width = RVRT_OW1_AXON_BITS + target_lcn;
+    const uint32_t ax_width = RVRT_OW1_AXON_BITS + view->target_lcn;
     const uint32_t axon_bit_idx =
         (((frame_timestep & RVRT_OW1_TS_MASK) << RVRT_OW1_AXON_BITS) |
          frame_axon) &
         ((1U << ax_width) - 1U);
 
-    uint32_t entry_count = 0U;
-    artifact_status = rvrt_artifact_output_entry_count(
-        artifact, thread_index, output_index, &entry_count);
-    status = runtime_status_from_artifact(artifact_status);
+    rvrt_artifact_output_entry_t entry = {0};
+    bool found = false;
+    const rvrt_artifact_status_t artifact_status =
+        rvrt_artifact_output_mapping_find(view, axon_bit_idx, &entry, &found);
+    rvrt_status_t status = runtime_status_from_artifact(artifact_status);
     if (status != RVRT_STATUS_OK) {
         return status;
     }
-
-    for (uint32_t i = 0U; i < entry_count; ++i) {
-        rvrt_artifact_output_entry_t entry = {0};
-        artifact_status = rvrt_artifact_output_entry(artifact, thread_index,
-                                                     output_index, i, &entry);
-        status = runtime_status_from_artifact(artifact_status);
-        if (status != RVRT_STATUS_OK) {
-            return status;
-        }
-        if (entry.axon_bit_idx != axon_bit_idx) {
-            continue;
-        }
-
-        uint32_t entry_bits = 0U;
-        bool is_signed = false;
-        if (!dtype_bits(entry.dtype, &entry_bits, &is_signed) ||
-            (entry_bits != bit_width)) {
-            RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
-                          "unsupported output dtype=%u bit_width=%u",
-                          (unsigned)entry.dtype, (unsigned)bit_width);
-            return RVRT_STATUS_UNSUPPORTED;
-        }
-        if (entry.elem_idx >= output_size) {
-            return RVRT_STATUS_OUT_OF_RANGE;
-        }
-
-        const uint32_t payload = frame->low & RVRT_OW1_DATA_MASK;
-        const uint32_t mask = bit_mask(entry_bits);
-        if ((payload & ~mask) != 0U) {
-            return RVRT_STATUS_OK;
-        }
-        if (is_signed && ((payload & (1U << (entry_bits - 1U))) != 0U)) {
-            RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "signed output decode unsupported");
-            return RVRT_STATUS_UNSUPPORTED;
-        }
-
-        output[entry.elem_idx] = (uint8_t)(payload & mask);
-        *written = true;
+    if (!found) {
         return RVRT_STATUS_OK;
     }
 
+    uint32_t entry_bits = 0U;
+    bool is_signed = false;
+    if (!dtype_bits(entry.dtype, &entry_bits, &is_signed) ||
+        (entry_bits != view->bit_width)) {
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
+                      "unsupported output dtype=%u bit_width=%u",
+                      (unsigned)entry.dtype, (unsigned)view->bit_width);
+        return RVRT_STATUS_UNSUPPORTED;
+    }
+    if (entry.elem_idx >= output_size) {
+        return RVRT_STATUS_OUT_OF_RANGE;
+    }
+
+    const uint32_t payload = frame->low & RVRT_OW1_DATA_MASK;
+    if (!is_signed && ((payload & ~bit_mask(entry_bits)) != 0U)) {
+        return RVRT_STATUS_OK;
+    }
+
+    output[entry.elem_idx] = decode_payload(payload, entry_bits, is_signed);
+    *written = true;
     return RVRT_STATUS_OK;
 }
 

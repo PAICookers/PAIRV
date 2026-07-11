@@ -63,6 +63,24 @@ struct IOMappingBuilder;
 struct ConfigFrames;
 struct ConfigFramesBuilder;
 
+struct RuntimeTarget;
+struct RuntimeTargetBuilder;
+
+struct RuntimeBuffer;
+struct RuntimeBufferBuilder;
+
+struct CpuTask;
+struct CpuTaskBuilder;
+
+struct PaicorePhase;
+struct PaicorePhaseBuilder;
+
+struct ExecutionStage;
+struct ExecutionStageBuilder;
+
+struct ExecutionPlan;
+struct ExecutionPlanBuilder;
+
 struct CompileArtifacts;
 struct CompileArtifactsBuilder;
 
@@ -76,11 +94,12 @@ enum DataType : int8_t {
   DataType_INT4 = 6,
   DataType_UINT8 = 7,
   DataType_INT8 = 8,
+  DataType_INT64 = 9,
   DataType_MIN = DataType_NOT_SET,
-  DataType_MAX = DataType_INT8
+  DataType_MAX = DataType_INT64
 };
 
-inline const DataType (&EnumValuesDataType())[9] {
+inline const DataType (&EnumValuesDataType())[10] {
   static const DataType values[] = {
     DataType_NOT_SET,
     DataType_UINT1,
@@ -90,13 +109,14 @@ inline const DataType (&EnumValuesDataType())[9] {
     DataType_UINT4,
     DataType_INT4,
     DataType_UINT8,
-    DataType_INT8
+    DataType_INT8,
+    DataType_INT64
   };
   return values;
 }
 
 inline const char * const *EnumNamesDataType() {
-  static const char * const names[10] = {
+  static const char * const names[11] = {
     "NOT_SET",
     "UINT1",
     "INT1",
@@ -106,13 +126,14 @@ inline const char * const *EnumNamesDataType() {
     "INT4",
     "UINT8",
     "INT8",
+    "INT64",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameDataType(DataType e) {
-  if (::flatbuffers::IsOutRange(e, DataType_NOT_SET, DataType_INT8)) return "";
+  if (::flatbuffers::IsOutRange(e, DataType_NOT_SET, DataType_INT64)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesDataType()[index];
 }
@@ -205,6 +226,63 @@ inline const char *EnumNameWordOrder(WordOrder e) {
   if (::flatbuffers::IsOutRange(e, WordOrder_HIGH_FIRST, WordOrder_LOW_FIRST)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesWordOrder()[index];
+}
+
+enum RuntimeBufferKind : int8_t {
+  RuntimeBufferKind_TENSOR = 0,
+  RuntimeBufferKind_MIN = RuntimeBufferKind_TENSOR,
+  RuntimeBufferKind_MAX = RuntimeBufferKind_TENSOR
+};
+
+inline const RuntimeBufferKind (&EnumValuesRuntimeBufferKind())[1] {
+  static const RuntimeBufferKind values[] = {
+    RuntimeBufferKind_TENSOR
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesRuntimeBufferKind() {
+  static const char * const names[2] = {
+    "TENSOR",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameRuntimeBufferKind(RuntimeBufferKind e) {
+  if (::flatbuffers::IsOutRange(e, RuntimeBufferKind_TENSOR, RuntimeBufferKind_TENSOR)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesRuntimeBufferKind()[index];
+}
+
+enum ExecutionStageKind : int8_t {
+  ExecutionStageKind_PAICORE = 0,
+  ExecutionStageKind_CPU_TASK = 1,
+  ExecutionStageKind_MIN = ExecutionStageKind_PAICORE,
+  ExecutionStageKind_MAX = ExecutionStageKind_CPU_TASK
+};
+
+inline const ExecutionStageKind (&EnumValuesExecutionStageKind())[2] {
+  static const ExecutionStageKind values[] = {
+    ExecutionStageKind_PAICORE,
+    ExecutionStageKind_CPU_TASK
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesExecutionStageKind() {
+  static const char * const names[3] = {
+    "PAICORE",
+    "CPU_TASK",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameExecutionStageKind(ExecutionStageKind e) {
+  if (::flatbuffers::IsOutRange(e, ExecutionStageKind_PAICORE, ExecutionStageKind_CPU_TASK)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesExecutionStageKind()[index];
 }
 
 struct CoreOffset FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -524,6 +602,12 @@ struct OutputEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t axon_bit_idx() const {
     return GetField<uint32_t>(VT_AXON_BIT_IDX, 0);
   }
+  bool KeyCompareLessThan(const OutputEntry * const o) const {
+    return axon_bit_idx() < o->axon_bit_idx();
+  }
+  int KeyCompareWithValue(uint32_t _axon_bit_idx) const {
+    return static_cast<int>(axon_bit_idx() > _axon_bit_idx) - static_cast<int>(axon_bit_idx() < _axon_bit_idx);
+  }
   paibox::backendv2::generated::fbs::DataType dtype() const {
     return static_cast<paibox::backendv2::generated::fbs::DataType>(GetField<int8_t>(VT_DTYPE, 0));
   }
@@ -637,7 +721,6 @@ struct InputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
     VT_NAME = 4,
     VT_SHAPE = 6,
     VT_BIT_WIDTH = 8,
-    VT_TICK = 10,
     VT_ENTRIES = 12
   };
   const ::flatbuffers::String *name() const {
@@ -648,9 +731,6 @@ struct InputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
   }
   uint32_t bit_width() const {
     return GetField<uint32_t>(VT_BIT_WIDTH, 0);
-  }
-  const paibox::backendv2::generated::fbs::TickParams *tick() const {
-    return GetPointer<const paibox::backendv2::generated::fbs::TickParams *>(VT_TICK);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputEntry>> *entries() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputEntry>> *>(VT_ENTRIES);
@@ -663,8 +743,6 @@ struct InputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
            VerifyOffset(verifier, VT_SHAPE) &&
            verifier.VerifyTable(shape()) &&
            VerifyField<uint32_t>(verifier, VT_BIT_WIDTH, 4) &&
-           VerifyOffset(verifier, VT_TICK) &&
-           verifier.VerifyTable(tick()) &&
            VerifyOffset(verifier, VT_ENTRIES) &&
            verifier.VerifyVector(entries()) &&
            verifier.VerifyVectorOfTables(entries()) &&
@@ -685,9 +763,6 @@ struct InputTensorMappingBuilder {
   void add_bit_width(uint32_t bit_width) {
     fbb_.AddElement<uint32_t>(InputTensorMapping::VT_BIT_WIDTH, bit_width, 0);
   }
-  void add_tick(::flatbuffers::Offset<paibox::backendv2::generated::fbs::TickParams> tick) {
-    fbb_.AddOffset(InputTensorMapping::VT_TICK, tick);
-  }
   void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputEntry>>> entries) {
     fbb_.AddOffset(InputTensorMapping::VT_ENTRIES, entries);
   }
@@ -707,11 +782,9 @@ inline ::flatbuffers::Offset<InputTensorMapping> CreateInputTensorMapping(
     ::flatbuffers::Offset<::flatbuffers::String> name = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0,
     uint32_t bit_width = 0,
-    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::TickParams> tick = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputEntry>>> entries = 0) {
   InputTensorMappingBuilder builder_(_fbb);
   builder_.add_entries(entries);
-  builder_.add_tick(tick);
   builder_.add_bit_width(bit_width);
   builder_.add_shape(shape);
   builder_.add_name(name);
@@ -723,7 +796,6 @@ inline ::flatbuffers::Offset<InputTensorMapping> CreateInputTensorMappingDirect(
     const char *name = nullptr,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0,
     uint32_t bit_width = 0,
-    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::TickParams> tick = 0,
     const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputEntry>> *entries = nullptr) {
   auto name__ = name ? _fbb.CreateString(name) : 0;
   auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputEntry>>(*entries) : 0;
@@ -732,7 +804,6 @@ inline ::flatbuffers::Offset<InputTensorMapping> CreateInputTensorMappingDirect(
       name__,
       shape,
       bit_width,
-      tick,
       entries__);
 }
 
@@ -743,7 +814,6 @@ struct OutputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
     VT_SHAPE = 6,
     VT_KIND = 8,
     VT_BIT_WIDTH = 10,
-    VT_TICK = 12,
     VT_ENTRIES = 14
   };
   const ::flatbuffers::String *name() const {
@@ -758,9 +828,6 @@ struct OutputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   uint32_t bit_width() const {
     return GetField<uint32_t>(VT_BIT_WIDTH, 0);
   }
-  const paibox::backendv2::generated::fbs::TickParams *tick() const {
-    return GetPointer<const paibox::backendv2::generated::fbs::TickParams *>(VT_TICK);
-  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *entries() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *>(VT_ENTRIES);
   }
@@ -773,8 +840,6 @@ struct OutputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
            verifier.VerifyTable(shape()) &&
            VerifyField<int8_t>(verifier, VT_KIND, 1) &&
            VerifyField<uint32_t>(verifier, VT_BIT_WIDTH, 4) &&
-           VerifyOffset(verifier, VT_TICK) &&
-           verifier.VerifyTable(tick()) &&
            VerifyOffset(verifier, VT_ENTRIES) &&
            verifier.VerifyVector(entries()) &&
            verifier.VerifyVectorOfTables(entries()) &&
@@ -798,9 +863,6 @@ struct OutputTensorMappingBuilder {
   void add_bit_width(uint32_t bit_width) {
     fbb_.AddElement<uint32_t>(OutputTensorMapping::VT_BIT_WIDTH, bit_width, 0);
   }
-  void add_tick(::flatbuffers::Offset<paibox::backendv2::generated::fbs::TickParams> tick) {
-    fbb_.AddOffset(OutputTensorMapping::VT_TICK, tick);
-  }
   void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>>> entries) {
     fbb_.AddOffset(OutputTensorMapping::VT_ENTRIES, entries);
   }
@@ -821,11 +883,9 @@ inline ::flatbuffers::Offset<OutputTensorMapping> CreateOutputTensorMapping(
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0,
     paibox::backendv2::generated::fbs::OutputKind kind = paibox::backendv2::generated::fbs::OutputKind_DATA,
     uint32_t bit_width = 0,
-    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::TickParams> tick = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>>> entries = 0) {
   OutputTensorMappingBuilder builder_(_fbb);
   builder_.add_entries(entries);
-  builder_.add_tick(tick);
   builder_.add_bit_width(bit_width);
   builder_.add_shape(shape);
   builder_.add_name(name);
@@ -839,17 +899,15 @@ inline ::flatbuffers::Offset<OutputTensorMapping> CreateOutputTensorMappingDirec
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0,
     paibox::backendv2::generated::fbs::OutputKind kind = paibox::backendv2::generated::fbs::OutputKind_DATA,
     uint32_t bit_width = 0,
-    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::TickParams> tick = 0,
-    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *entries = nullptr) {
+    std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *entries = nullptr) {
   auto name__ = name ? _fbb.CreateString(name) : 0;
-  auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>>(*entries) : 0;
+  auto entries__ = entries ? _fbb.CreateVectorOfSortedTables<paibox::backendv2::generated::fbs::OutputEntry>(entries) : 0;
   return paibox::backendv2::generated::fbs::CreateOutputTensorMapping(
       _fbb,
       name__,
       shape,
       kind,
       bit_width,
-      tick,
       entries__);
 }
 
@@ -1356,12 +1414,461 @@ inline ::flatbuffers::Offset<ConfigFrames> CreateConfigFramesDirect(
       word_order);
 }
 
+struct RuntimeTarget FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RuntimeTargetBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_TARGET_ID = 4,
+    VT_PROFILE_ID = 6,
+    VT_REQUIRED_TASK_ABI_VERSION = 8
+  };
+  const ::flatbuffers::String *target_id() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_TARGET_ID);
+  }
+  const ::flatbuffers::String *profile_id() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_PROFILE_ID);
+  }
+  uint32_t required_task_abi_version() const {
+    return GetField<uint32_t>(VT_REQUIRED_TASK_ABI_VERSION, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_TARGET_ID) &&
+           verifier.VerifyString(target_id()) &&
+           VerifyOffset(verifier, VT_PROFILE_ID) &&
+           verifier.VerifyString(profile_id()) &&
+           VerifyField<uint32_t>(verifier, VT_REQUIRED_TASK_ABI_VERSION, 4) &&
+           verifier.EndTable();
+  }
+};
+
+struct RuntimeTargetBuilder {
+  typedef RuntimeTarget Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_target_id(::flatbuffers::Offset<::flatbuffers::String> target_id) {
+    fbb_.AddOffset(RuntimeTarget::VT_TARGET_ID, target_id);
+  }
+  void add_profile_id(::flatbuffers::Offset<::flatbuffers::String> profile_id) {
+    fbb_.AddOffset(RuntimeTarget::VT_PROFILE_ID, profile_id);
+  }
+  void add_required_task_abi_version(uint32_t required_task_abi_version) {
+    fbb_.AddElement<uint32_t>(RuntimeTarget::VT_REQUIRED_TASK_ABI_VERSION, required_task_abi_version, 0);
+  }
+  explicit RuntimeTargetBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<RuntimeTarget> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<RuntimeTarget>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<RuntimeTarget> CreateRuntimeTarget(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> target_id = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> profile_id = 0,
+    uint32_t required_task_abi_version = 0) {
+  RuntimeTargetBuilder builder_(_fbb);
+  builder_.add_required_task_abi_version(required_task_abi_version);
+  builder_.add_profile_id(profile_id);
+  builder_.add_target_id(target_id);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<RuntimeTarget> CreateRuntimeTargetDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *target_id = nullptr,
+    const char *profile_id = nullptr,
+    uint32_t required_task_abi_version = 0) {
+  auto target_id__ = target_id ? _fbb.CreateString(target_id) : 0;
+  auto profile_id__ = profile_id ? _fbb.CreateString(profile_id) : 0;
+  return paibox::backendv2::generated::fbs::CreateRuntimeTarget(
+      _fbb,
+      target_id__,
+      profile_id__,
+      required_task_abi_version);
+}
+
+struct RuntimeBuffer FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RuntimeBufferBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_KIND = 4,
+    VT_DTYPE = 6,
+    VT_SHAPE = 8
+  };
+  paibox::backendv2::generated::fbs::RuntimeBufferKind kind() const {
+    return static_cast<paibox::backendv2::generated::fbs::RuntimeBufferKind>(GetField<int8_t>(VT_KIND, 0));
+  }
+  paibox::backendv2::generated::fbs::DataType dtype() const {
+    return static_cast<paibox::backendv2::generated::fbs::DataType>(GetField<int8_t>(VT_DTYPE, 0));
+  }
+  const paibox::backendv2::generated::fbs::Shape *shape() const {
+    return GetPointer<const paibox::backendv2::generated::fbs::Shape *>(VT_SHAPE);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<int8_t>(verifier, VT_KIND, 1) &&
+           VerifyField<int8_t>(verifier, VT_DTYPE, 1) &&
+           VerifyOffset(verifier, VT_SHAPE) &&
+           verifier.VerifyTable(shape()) &&
+           verifier.EndTable();
+  }
+};
+
+struct RuntimeBufferBuilder {
+  typedef RuntimeBuffer Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_kind(paibox::backendv2::generated::fbs::RuntimeBufferKind kind) {
+    fbb_.AddElement<int8_t>(RuntimeBuffer::VT_KIND, static_cast<int8_t>(kind), 0);
+  }
+  void add_dtype(paibox::backendv2::generated::fbs::DataType dtype) {
+    fbb_.AddElement<int8_t>(RuntimeBuffer::VT_DTYPE, static_cast<int8_t>(dtype), 0);
+  }
+  void add_shape(::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape) {
+    fbb_.AddOffset(RuntimeBuffer::VT_SHAPE, shape);
+  }
+  explicit RuntimeBufferBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<RuntimeBuffer> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<RuntimeBuffer>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<RuntimeBuffer> CreateRuntimeBuffer(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    paibox::backendv2::generated::fbs::RuntimeBufferKind kind = paibox::backendv2::generated::fbs::RuntimeBufferKind_TENSOR,
+    paibox::backendv2::generated::fbs::DataType dtype = paibox::backendv2::generated::fbs::DataType_NOT_SET,
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0) {
+  RuntimeBufferBuilder builder_(_fbb);
+  builder_.add_shape(shape);
+  builder_.add_dtype(dtype);
+  builder_.add_kind(kind);
+  return builder_.Finish();
+}
+
+struct CpuTask FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CpuTaskBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_INPUT_REF = 4,
+    VT_OUTPUT_REF = 6
+  };
+  uint32_t input_ref() const {
+    return GetField<uint32_t>(VT_INPUT_REF, 0);
+  }
+  uint32_t output_ref() const {
+    return GetField<uint32_t>(VT_OUTPUT_REF, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_INPUT_REF, 4) &&
+           VerifyField<uint32_t>(verifier, VT_OUTPUT_REF, 4) &&
+           verifier.EndTable();
+  }
+};
+
+struct CpuTaskBuilder {
+  typedef CpuTask Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_input_ref(uint32_t input_ref) {
+    fbb_.AddElement<uint32_t>(CpuTask::VT_INPUT_REF, input_ref, 0);
+  }
+  void add_output_ref(uint32_t output_ref) {
+    fbb_.AddElement<uint32_t>(CpuTask::VT_OUTPUT_REF, output_ref, 0);
+  }
+  explicit CpuTaskBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CpuTask> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CpuTask>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CpuTask> CreateCpuTask(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t input_ref = 0,
+    uint32_t output_ref = 0) {
+  CpuTaskBuilder builder_(_fbb);
+  builder_.add_output_ref(output_ref);
+  builder_.add_input_ref(input_ref);
+  return builder_.Finish();
+}
+
+struct PaicorePhase FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef PaicorePhaseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_INPUT_REF = 4,
+    VT_OUTPUT_REF = 6,
+    VT_INPUT_MAPPING_REF = 8,
+    VT_OUTPUT_MAPPING_REF = 10,
+    VT_LATENCY_TICKS = 12
+  };
+  uint32_t input_ref() const {
+    return GetField<uint32_t>(VT_INPUT_REF, 0);
+  }
+  uint32_t output_ref() const {
+    return GetField<uint32_t>(VT_OUTPUT_REF, 0);
+  }
+  uint32_t input_mapping_ref() const {
+    return GetField<uint32_t>(VT_INPUT_MAPPING_REF, 0);
+  }
+  uint32_t output_mapping_ref() const {
+    return GetField<uint32_t>(VT_OUTPUT_MAPPING_REF, 0);
+  }
+  uint32_t latency_ticks() const {
+    return GetField<uint32_t>(VT_LATENCY_TICKS, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_INPUT_REF, 4) &&
+           VerifyField<uint32_t>(verifier, VT_OUTPUT_REF, 4) &&
+           VerifyField<uint32_t>(verifier, VT_INPUT_MAPPING_REF, 4) &&
+           VerifyField<uint32_t>(verifier, VT_OUTPUT_MAPPING_REF, 4) &&
+           VerifyField<uint32_t>(verifier, VT_LATENCY_TICKS, 4) &&
+           verifier.EndTable();
+  }
+};
+
+struct PaicorePhaseBuilder {
+  typedef PaicorePhase Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_input_ref(uint32_t input_ref) {
+    fbb_.AddElement<uint32_t>(PaicorePhase::VT_INPUT_REF, input_ref, 0);
+  }
+  void add_output_ref(uint32_t output_ref) {
+    fbb_.AddElement<uint32_t>(PaicorePhase::VT_OUTPUT_REF, output_ref, 0);
+  }
+  void add_input_mapping_ref(uint32_t input_mapping_ref) {
+    fbb_.AddElement<uint32_t>(PaicorePhase::VT_INPUT_MAPPING_REF, input_mapping_ref, 0);
+  }
+  void add_output_mapping_ref(uint32_t output_mapping_ref) {
+    fbb_.AddElement<uint32_t>(PaicorePhase::VT_OUTPUT_MAPPING_REF, output_mapping_ref, 0);
+  }
+  void add_latency_ticks(uint32_t latency_ticks) {
+    fbb_.AddElement<uint32_t>(PaicorePhase::VT_LATENCY_TICKS, latency_ticks, 0);
+  }
+  explicit PaicorePhaseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<PaicorePhase> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<PaicorePhase>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<PaicorePhase> CreatePaicorePhase(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t input_ref = 0,
+    uint32_t output_ref = 0,
+    uint32_t input_mapping_ref = 0,
+    uint32_t output_mapping_ref = 0,
+    uint32_t latency_ticks = 0) {
+  PaicorePhaseBuilder builder_(_fbb);
+  builder_.add_latency_ticks(latency_ticks);
+  builder_.add_output_mapping_ref(output_mapping_ref);
+  builder_.add_input_mapping_ref(input_mapping_ref);
+  builder_.add_output_ref(output_ref);
+  builder_.add_input_ref(input_ref);
+  return builder_.Finish();
+}
+
+struct ExecutionStage FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ExecutionStageBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_STAGE_INDEX = 4,
+    VT_KIND = 6,
+    VT_REF_INDEX = 8
+  };
+  uint32_t stage_index() const {
+    return GetField<uint32_t>(VT_STAGE_INDEX, 0);
+  }
+  paibox::backendv2::generated::fbs::ExecutionStageKind kind() const {
+    return static_cast<paibox::backendv2::generated::fbs::ExecutionStageKind>(GetField<int8_t>(VT_KIND, 0));
+  }
+  uint32_t ref_index() const {
+    return GetField<uint32_t>(VT_REF_INDEX, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_STAGE_INDEX, 4) &&
+           VerifyField<int8_t>(verifier, VT_KIND, 1) &&
+           VerifyField<uint32_t>(verifier, VT_REF_INDEX, 4) &&
+           verifier.EndTable();
+  }
+};
+
+struct ExecutionStageBuilder {
+  typedef ExecutionStage Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_stage_index(uint32_t stage_index) {
+    fbb_.AddElement<uint32_t>(ExecutionStage::VT_STAGE_INDEX, stage_index, 0);
+  }
+  void add_kind(paibox::backendv2::generated::fbs::ExecutionStageKind kind) {
+    fbb_.AddElement<int8_t>(ExecutionStage::VT_KIND, static_cast<int8_t>(kind), 0);
+  }
+  void add_ref_index(uint32_t ref_index) {
+    fbb_.AddElement<uint32_t>(ExecutionStage::VT_REF_INDEX, ref_index, 0);
+  }
+  explicit ExecutionStageBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ExecutionStage> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ExecutionStage>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ExecutionStage> CreateExecutionStage(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t stage_index = 0,
+    paibox::backendv2::generated::fbs::ExecutionStageKind kind = paibox::backendv2::generated::fbs::ExecutionStageKind_PAICORE,
+    uint32_t ref_index = 0) {
+  ExecutionStageBuilder builder_(_fbb);
+  builder_.add_ref_index(ref_index);
+  builder_.add_stage_index(stage_index);
+  builder_.add_kind(kind);
+  return builder_.Finish();
+}
+
+struct ExecutionPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ExecutionPlanBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_RUNTIME_TARGET = 4,
+    VT_BUFFERS = 6,
+    VT_CPU_TASKS = 8,
+    VT_STAGES = 10,
+    VT_PAICORE_PHASES = 12
+  };
+  const paibox::backendv2::generated::fbs::RuntimeTarget *runtime_target() const {
+    return GetPointer<const paibox::backendv2::generated::fbs::RuntimeTarget *>(VT_RUNTIME_TARGET);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeBuffer>> *buffers() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeBuffer>> *>(VT_BUFFERS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CpuTask>> *cpu_tasks() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CpuTask>> *>(VT_CPU_TASKS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionStage>> *stages() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionStage>> *>(VT_STAGES);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::PaicorePhase>> *paicore_phases() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::PaicorePhase>> *>(VT_PAICORE_PHASES);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_RUNTIME_TARGET) &&
+           verifier.VerifyTable(runtime_target()) &&
+           VerifyOffset(verifier, VT_BUFFERS) &&
+           verifier.VerifyVector(buffers()) &&
+           verifier.VerifyVectorOfTables(buffers()) &&
+           VerifyOffset(verifier, VT_CPU_TASKS) &&
+           verifier.VerifyVector(cpu_tasks()) &&
+           verifier.VerifyVectorOfTables(cpu_tasks()) &&
+           VerifyOffset(verifier, VT_STAGES) &&
+           verifier.VerifyVector(stages()) &&
+           verifier.VerifyVectorOfTables(stages()) &&
+           VerifyOffset(verifier, VT_PAICORE_PHASES) &&
+           verifier.VerifyVector(paicore_phases()) &&
+           verifier.VerifyVectorOfTables(paicore_phases()) &&
+           verifier.EndTable();
+  }
+};
+
+struct ExecutionPlanBuilder {
+  typedef ExecutionPlan Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_runtime_target(::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeTarget> runtime_target) {
+    fbb_.AddOffset(ExecutionPlan::VT_RUNTIME_TARGET, runtime_target);
+  }
+  void add_buffers(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeBuffer>>> buffers) {
+    fbb_.AddOffset(ExecutionPlan::VT_BUFFERS, buffers);
+  }
+  void add_cpu_tasks(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CpuTask>>> cpu_tasks) {
+    fbb_.AddOffset(ExecutionPlan::VT_CPU_TASKS, cpu_tasks);
+  }
+  void add_stages(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionStage>>> stages) {
+    fbb_.AddOffset(ExecutionPlan::VT_STAGES, stages);
+  }
+  void add_paicore_phases(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::PaicorePhase>>> paicore_phases) {
+    fbb_.AddOffset(ExecutionPlan::VT_PAICORE_PHASES, paicore_phases);
+  }
+  explicit ExecutionPlanBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ExecutionPlan> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ExecutionPlan>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ExecutionPlan> CreateExecutionPlan(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeTarget> runtime_target = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeBuffer>>> buffers = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CpuTask>>> cpu_tasks = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionStage>>> stages = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::PaicorePhase>>> paicore_phases = 0) {
+  ExecutionPlanBuilder builder_(_fbb);
+  builder_.add_paicore_phases(paicore_phases);
+  builder_.add_stages(stages);
+  builder_.add_cpu_tasks(cpu_tasks);
+  builder_.add_buffers(buffers);
+  builder_.add_runtime_target(runtime_target);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<ExecutionPlan> CreateExecutionPlanDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeTarget> runtime_target = 0,
+    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeBuffer>> *buffers = nullptr,
+    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CpuTask>> *cpu_tasks = nullptr,
+    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionStage>> *stages = nullptr,
+    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::PaicorePhase>> *paicore_phases = nullptr) {
+  auto buffers__ = buffers ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeBuffer>>(*buffers) : 0;
+  auto cpu_tasks__ = cpu_tasks ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CpuTask>>(*cpu_tasks) : 0;
+  auto stages__ = stages ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionStage>>(*stages) : 0;
+  auto paicore_phases__ = paicore_phases ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::PaicorePhase>>(*paicore_phases) : 0;
+  return paibox::backendv2::generated::fbs::CreateExecutionPlan(
+      _fbb,
+      runtime_target,
+      buffers__,
+      cpu_tasks__,
+      stages__,
+      paicore_phases__);
+}
+
 struct CompileArtifacts FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CompileArtifactsBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SCHEMA_VERSION = 4,
     VT_IO_MAPPING = 6,
-    VT_CONFIG_FRAMES = 8
+    VT_CONFIG_FRAMES = 8,
+    VT_EXECUTION_PLAN = 10
   };
   uint32_t schema_version() const {
     return GetField<uint32_t>(VT_SCHEMA_VERSION, 0);
@@ -1372,6 +1879,9 @@ struct CompileArtifacts FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const paibox::backendv2::generated::fbs::ConfigFrames *config_frames() const {
     return GetPointer<const paibox::backendv2::generated::fbs::ConfigFrames *>(VT_CONFIG_FRAMES);
   }
+  const paibox::backendv2::generated::fbs::ExecutionPlan *execution_plan() const {
+    return GetPointer<const paibox::backendv2::generated::fbs::ExecutionPlan *>(VT_EXECUTION_PLAN);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1380,6 +1890,8 @@ struct CompileArtifacts FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(io_mapping()) &&
            VerifyOffset(verifier, VT_CONFIG_FRAMES) &&
            verifier.VerifyTable(config_frames()) &&
+           VerifyOffset(verifier, VT_EXECUTION_PLAN) &&
+           verifier.VerifyTable(execution_plan()) &&
            verifier.EndTable();
   }
 };
@@ -1397,6 +1909,9 @@ struct CompileArtifactsBuilder {
   void add_config_frames(::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames) {
     fbb_.AddOffset(CompileArtifacts::VT_CONFIG_FRAMES, config_frames);
   }
+  void add_execution_plan(::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionPlan> execution_plan) {
+    fbb_.AddOffset(CompileArtifacts::VT_EXECUTION_PLAN, execution_plan);
+  }
   explicit CompileArtifactsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1412,8 +1927,10 @@ inline ::flatbuffers::Offset<CompileArtifacts> CreateCompileArtifacts(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t schema_version = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::IOMapping> io_mapping = 0,
-    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames = 0) {
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames = 0,
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::ExecutionPlan> execution_plan = 0) {
   CompileArtifactsBuilder builder_(_fbb);
+  builder_.add_execution_plan(execution_plan);
   builder_.add_config_frames(config_frames);
   builder_.add_io_mapping(io_mapping);
   builder_.add_schema_version(schema_version);
