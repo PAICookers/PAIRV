@@ -44,7 +44,7 @@ void rvrt_packet_write_u32_le(uint8_t *dst, uint32_t value)
     dst[3] = (uint8_t)((value >> 24U) & 0xFFU);
 }
 
-uint32_t rvrt_packet_read_u32_le(const uint8_t *src)
+static uint32_t rvrt_packet_read_u32_le(const uint8_t *src)
 {
     if (src == NULL) {
         return 0U;
@@ -79,20 +79,25 @@ static uint32_t compute_crc(uint8_t command, uint8_t status,
     return crc32_finish(crc);
 }
 
-void rvrt_packet_build_header(uint8_t *dst, uint8_t command, uint8_t status,
-                              const uint8_t *payload, uint32_t payload_len)
+bool rvrt_packet_build_header(uint8_t *dst, uint32_t dst_size, uint8_t command,
+                              uint8_t status, const uint8_t *payload,
+                              uint32_t payload_len)
 {
-    if (dst == NULL) {
-        return;
+    if ((dst == NULL) || (dst_size < RVRT_PACKET_HEADER_SIZE) ||
+        ((payload == NULL) && (payload_len != 0U))) {
+        return false;
     }
     build_header_prefix(dst, command, status, payload_len);
     rvrt_packet_write_u32_le(
         dst + 12U, compute_crc(command, status, payload, payload_len));
+    return true;
 }
 
-bool rvrt_packet_parse_header(const uint8_t *src, rvrt_packet_header_t *header)
+bool rvrt_packet_parse_header(const uint8_t *src, uint32_t src_size,
+                              rvrt_packet_header_t *header)
 {
-    if ((src == NULL) || (header == NULL)) {
+    if ((src == NULL) || (src_size < RVRT_PACKET_HEADER_SIZE) ||
+        (header == NULL)) {
         return false;
     }
     if ((src[0] != RVRT_PACKET_MAGIC0) || (src[1] != RVRT_PACKET_MAGIC1) ||
@@ -109,9 +114,10 @@ bool rvrt_packet_parse_header(const uint8_t *src, rvrt_packet_header_t *header)
 }
 
 bool rvrt_packet_validate_crc(const rvrt_packet_header_t *header,
-                              const uint8_t *payload)
+                              const uint8_t *payload, uint32_t payload_size)
 {
-    if (header == NULL) {
+    if ((header == NULL) || (payload_size != header->payload_len) ||
+        ((payload == NULL) && (payload_size != 0U))) {
         return false;
     }
     const uint32_t expected = compute_crc(header->command, header->status,
