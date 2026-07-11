@@ -1,0 +1,206 @@
+namespace paibox.backendv2.generated.fbs;
+
+enum DataType : byte {
+  NOT_SET = 0,
+  UINT1 = 1,
+  INT1 = 2,
+  UINT2 = 3,
+  INT2 = 4,
+  UINT4 = 5,
+  INT4 = 6,
+  UINT8 = 7,
+  INT8 = 8,
+  // CPU task index tensors use int64; PAICORE DATA payloads stay <= 8 bit.
+  INT64 = 9
+}
+
+enum OutputKind : byte {
+  DATA = 0,
+  VOLTAGE = 1
+}
+
+enum DecodeMode : byte {
+  STREAM = 0,
+  STEP = 1
+}
+
+enum WordOrder : byte {
+  HIGH_FIRST = 0,
+  LOW_FIRST = 1
+}
+
+table CoreOffset {
+  xy:int;
+  x:int;
+  y:int;
+}
+
+table CopyCount {
+  xy:int;
+  x:int;
+  y:int;
+}
+
+table TickParams {
+  tick_start:uint;
+  tick_duration:uint;
+  tick_initial:uint;
+}
+
+table InputEntry {
+  elem_idx:uint;
+  core_offset:CoreOffset;
+  copy_count:CopyCount;
+  tick_relative:uint;
+  addr_axon:uint;
+  target_lcn:uint;
+  copy_id:uint;
+  dtype:DataType = NOT_SET;
+}
+
+table OutputEntry {
+  elem_idx:uint;
+  copy_id:uint;
+  axon_bit_idx:uint (key);
+  dtype:DataType = NOT_SET;
+}
+
+table Shape {
+  size:[int];
+}
+
+table InputTensorMapping {
+  name:string;
+  shape:Shape;
+  bit_width:uint;
+  tick:TickParams (deprecated);
+  entries:[InputEntry];
+}
+
+table OutputTensorMapping {
+  name:string;
+  shape:Shape;
+  kind:OutputKind = DATA;
+  bit_width:uint;
+  tick:TickParams (deprecated);
+  entries:[OutputEntry];
+}
+
+table InputTensorMappings {
+  items:[InputTensorMapping];
+}
+
+table OutputTensorMappings {
+  target_lcn:uint;
+  items:[OutputTensorMapping];
+}
+
+table RuntimeParams {
+  timesteps:uint;
+  tick_depth:uint;
+  sync_steps:uint;
+  decode_mode:DecodeMode = STREAM;
+}
+
+table CoreTick {
+  core_offset:CoreOffset;
+  tick:TickParams;
+  nodes:[string];
+}
+
+table ThreadIOMapping {
+  thread_id:uint;
+  root_core_offset:CoreOffset;
+  runtime:RuntimeParams;
+  input_mappings:InputTensorMappings;
+  output_mappings:OutputTensorMappings;
+  core_ticks:[CoreTick];
+}
+
+table IOMapping {
+  threads:[ThreadIOMapping];
+}
+
+table ConfigFrames {
+  words:[uint];
+  word_order:WordOrder = HIGH_FIRST;
+}
+
+table RuntimeTarget {
+  // Logical runtime target id in this package, e.g. rv_cpu0.
+  target_id:string;
+  // Compile-time target profile that selected the generated task ABI.
+  profile_id:string;
+  // Minimum rvrt_tasks ABI version required by this artifact.
+  required_task_abi_version:uint;
+}
+
+enum RuntimeBufferKind : byte {
+  TENSOR = 0
+}
+
+table RuntimeBuffer {
+  // v7b only supports contiguous tensor buffers.
+  kind:RuntimeBufferKind = TENSOR;
+  // Element dtype of this runtime buffer; byte size is derived from dtype and shape.
+  dtype:DataType = NOT_SET;
+  // Logical tensor shape in contiguous C-order layout.
+  shape:Shape;
+}
+
+table CpuTask {
+  // Index into ExecutionPlan.buffers for the generated task input tensor.
+  input_ref:uint;
+  // Index into ExecutionPlan.buffers for the generated task output tensor.
+  output_ref:uint;
+}
+
+table PaicorePhase {
+  // Index into ExecutionPlan.buffers for frames encoded into PAICORE.
+  input_ref:uint;
+  // Index into ExecutionPlan.buffers for DATA frames decoded from PAICORE.
+  output_ref:uint;
+  // Index into ThreadIOMapping.input_mappings.items for this PAICORE phase.
+  input_mapping_ref:uint;
+  // Index into ThreadIOMapping.output_mappings.items for this PAICORE phase.
+  output_mapping_ref:uint;
+  // Input-to-output latency on the shared PAICORE logical timeline.
+  latency_ticks:uint;
+}
+
+enum ExecutionStageKind : byte {
+  PAICORE = 0,
+  CPU_TASK = 1
+}
+
+table ExecutionStage {
+  // Monotonic index in execution order.
+  stage_index:uint;
+  // Stage executor kind: PAICORE segment or generated CPU task.
+  kind:ExecutionStageKind = PAICORE;
+  // Local index into the array selected by kind. CPU_TASK uses cpu_tasks.
+  ref_index:uint;
+}
+
+table ExecutionPlan {
+  // Target-local runtime package contract. Empty when no CPU task is exported.
+  runtime_target:RuntimeTarget;
+  // Runtime buffers shared by execution stages and generated CPU tasks.
+  buffers:[RuntimeBuffer];
+  // Generated CPU task invocations; bodies live in rvrt_tasks.c/.h.
+  cpu_tasks:[CpuTask];
+  // Ordered runtime stages. PAICORE config is global and replayed once.
+  stages:[ExecutionStage];
+  // PAICORE runtime phases. Each phase uses global static config already replayed.
+  paicore_phases:[PaicorePhase];
+}
+
+table CompileArtifacts {
+  schema_version:uint;
+  io_mapping:IOMapping;
+  config_frames:ConfigFrames;
+  execution_plan:ExecutionPlan;
+}
+
+root_type CompileArtifacts;
+file_identifier "PBCA";

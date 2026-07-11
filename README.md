@@ -157,7 +157,7 @@ The root `Makefile` is the intended CLI entrypoint.
 ```bash
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/debug_demo all
-make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/flatbuffer_flash all
+make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/flatbuffers all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/nice all
 make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/uart all
 make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/simple_nn all
@@ -240,18 +240,18 @@ Simple bring-up example for startup, console output, and base platform verificat
 
 Minimal demo for the shared `Lib/debug.{h,c}` logging helper.
 
-### `application/baremetal/flatbuffer_flash`
+### `application/baremetal/flatbuffers`
 
-Smoke test that links `fixtures/compile_artifacts.bin` into flash and reads it
-through `Lib/runtime`.
+Minimal example that links `fixtures/compile_artifacts.bin` into flash and
+validates/reads it through `Lib/runtime/artifact_reader`.
 
 Constraints:
 
 - requires `third_party/flatbuffers`
 - requires `DOWNLOAD=ilmflashxip` or `DOWNLOAD=flashxip`
-- consumes checked-in `fixtures/compile_artifacts.fbs` and
-  `fixtures/compile_artifacts.bin`; JSON generation fixtures are not part of
-  the board build
+- consumes `fixtures/compile_artifacts.bin`; the matching `.fbs` stays beside
+  it as a format reference
+- does not configure PAICORE or run inference
 
 ### `application/baremetal/nice`
 
