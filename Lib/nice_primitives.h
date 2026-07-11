@@ -1,7 +1,7 @@
 #ifndef RV_NICE_PRIMITIVES_H
 #define RV_NICE_PRIMITIVES_H
 
-#include "nuclei_sdk_soc.h"
+#include <nmsis_core.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -53,30 +53,31 @@ __STATIC_FORCEINLINE rv_csr_t rv_nice_read_cycles(void)
 #define RV_NICE_IS_ENABLED() rv_nice_is_enabled()
 #define RV_NICE_HW_PRESENT() rv_nice_hw_is_present()
 
-__STATIC_FORCEINLINE void rv_nice_bf16_setup(uint16_t *base_addr,
+/* Keep GCC extended-asm constraint columns aligned. */
+/* clang-format off */
+__STATIC_FORCEINLINE void rv_nice_bf16_setup(const uint16_t *base_addr,
                                              uint16_t *target_addr)
 {
-    int zero = 0;
-
-    asm volatile(".insn r 0xb, 3, 0, x0, %1, %2"
-                 : "=r"(zero)
-                 : "r"(base_addr), "r"(target_addr));
+    __ASM volatile(".insn r 0xb, 3, 0, x0, %0, %1"
+                   :
+                   : "r"(base_addr), "r"(target_addr));
 }
 
 __STATIC_FORCEINLINE void rv_nice_bf16_wsetup(uint32_t word_len)
 {
-    int zero = 0;
-
-    asm volatile(".insn r 0xb, 2, 0, x0, %1, x0" : "=r"(zero) : "r"(word_len));
+    __ASM volatile(".insn r 0xb, 2, 0, x0, %0, x0"
+                   :
+                   : "r"(word_len));
 }
 
-__STATIC_FORCEINLINE uint16_t rv_nice_bf16_load_acc(uint16_t *base_addr)
+__STATIC_FORCEINLINE uint16_t rv_nice_bf16_load_acc(const uint16_t *base_addr)
 {
     uint16_t acc_res;
 
-    asm volatile(".insn r 0xb, 6, 1, %0, %1, x0"
-                 : "=r"(acc_res)
-                 : "r"(base_addr));
+    __ASM volatile(".insn r 0xb, 6, 1, %0, %1, x0"
+                   : "=r"(acc_res)
+                   : "r"(base_addr)
+                   : "memory");
     return acc_res;
 }
 
@@ -84,59 +85,62 @@ __STATIC_FORCEINLINE uint16_t rv_nice_bf16_div(uint16_t acc_res)
 {
     uint16_t div_res;
 
-    asm volatile(".insn r 0xb, 6, 2, %0, %1, x0"
-                 : "=r"(div_res)
-                 : "r"(acc_res));
+    __ASM volatile(".insn r 0xb, 6, 2, %0, %1, x0"
+                   : "=r"(div_res)
+                   : "r"(acc_res));
     return div_res;
 }
 
-__STATIC_FORCEINLINE uint16_t rv_nice_bf16_square_sum(uint16_t *load_base_addr)
+__STATIC_FORCEINLINE uint16_t
+rv_nice_bf16_square_sum(const uint16_t *load_base_addr)
 {
     uint16_t square_sum_res;
 
-    asm volatile(".insn r 0xb, 6, 3, %0, %1, x0"
-                 : "=r"(square_sum_res)
-                 : "r"(load_base_addr));
+    __ASM volatile(".insn r 0xb, 6, 3, %0, %1, x0"
+                   : "=r"(square_sum_res)
+                   : "r"(load_base_addr)
+                   : "memory");
     return square_sum_res;
 }
 
 __STATIC_FORCEINLINE void rv_nice_bf16_load_sub_store(uint16_t mean,
                                                       uint16_t *store_base_addr)
 {
-    int zero = 0;
-
-    asm volatile(".insn r 0xb, 3, 4, x0, %1, %2"
-                 : "=r"(zero)
-                 : "r"(mean), "r"(store_base_addr));
+    __ASM volatile(".insn r 0xb, 3, 4, x0, %0, %1"
+                   :
+                   : "r"(mean), "r"(store_base_addr)
+                   : "memory");
 }
 
 __STATIC_FORCEINLINE uint16_t rv_nice_bf16_sqrt(uint16_t mean)
 {
-    uint16_t sqrt_mean = 0;
+    uint16_t sqrt_mean;
 
-    asm volatile(".insn r 0xb, 6, 5, %0, %1, x0" : "=r"(sqrt_mean) : "r"(mean));
+    __ASM volatile(".insn r 0xb, 6, 5, %0, %1, x0"
+                   : "=r"(sqrt_mean)
+                   : "r"(mean));
     return sqrt_mean;
 }
 
-__STATIC_FORCEINLINE void rv_nice_bf16_load_div_store(uint16_t *load_base_addr,
-                                                      uint16_t sqrt_mean)
+__STATIC_FORCEINLINE void
+rv_nice_bf16_load_div_store(const uint16_t *load_base_addr, uint16_t sqrt_mean)
 {
-    int zero = 0;
-
-    asm volatile(".insn r 0xb, 3, 6, x0, %1, %2"
-                 : "=r"(zero)
-                 : "r"(load_base_addr), "r"(sqrt_mean));
+    __ASM volatile(".insn r 0xb, 3, 6, x0, %0, %1"
+                   :
+                   : "r"(load_base_addr), "r"(sqrt_mean)
+                   : "memory");
 }
 
-__STATIC_FORCEINLINE void rv_nice_bf16_load_exp_store(uint16_t *load_base_addr,
-                                                      uint16_t *store_base_addr)
+__STATIC_FORCEINLINE void
+rv_nice_bf16_load_exp_store(const uint16_t *load_base_addr,
+                            uint16_t *store_base_addr)
 {
-    int zero = 0;
-
-    asm volatile(".insn r 0xb, 3, 7, x0, %1, %2"
-                 : "=r"(zero)
-                 : "r"(load_base_addr), "r"(store_base_addr));
+    __ASM volatile(".insn r 0xb, 3, 7, x0, %0, %1"
+                   :
+                   : "r"(load_base_addr), "r"(store_base_addr)
+                   : "memory");
 }
+/* clang-format on */
 
 #ifdef __cplusplus
 }
