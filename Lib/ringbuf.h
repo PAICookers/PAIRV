@@ -1,7 +1,6 @@
-#ifndef _RV_RINGBUF_H
-#define _RV_RINGBUF_H
+#ifndef RV_RINGBUF_H
+#define RV_RINGBUF_H
 
-#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -36,17 +35,10 @@ void rv_ringbuf_reset(rv_ringbuf_t *rb);
 rv_ringbuf_status_t rv_ringbuf_put(rv_ringbuf_t *rb, uint8_t byte);
 rv_ringbuf_status_t rv_ringbuf_get(rv_ringbuf_t *rb, uint8_t *byte);
 
-/* Generic byte-sink adapter for callback-style producers such as UART RX FIFO
- * drain helpers. The callback context must point to `rv_ringbuf_t`. */
-void rv_ringbuf_put_byte_cb(uint8_t byte, void *ctx);
-
 uint32_t rv_ringbuf_available(const rv_ringbuf_t *rb);
-uint32_t rv_ringbuf_free_space(const rv_ringbuf_t *rb);
-bool rv_ringbuf_is_empty(const rv_ringbuf_t *rb);
-bool rv_ringbuf_is_full(const rv_ringbuf_t *rb);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* _RV_RINGBUF_H */
+#endif /* RV_RINGBUF_H */

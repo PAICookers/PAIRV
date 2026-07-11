@@ -1,4 +1,6 @@
 #include "ringbuf.h"
+#include <nmsis_core.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 static bool rv_ringbuf_is_valid(const rv_ringbuf_t *rb)
@@ -49,6 +51,7 @@ rv_ringbuf_status_t rv_ringbuf_put(rv_ringbuf_t *rb, uint8_t byte)
     }
 
     rb->storage[head] = byte;
+    __COMPILER_BARRIER();
     rb->head = next_head;
     return RV_RINGBUF_OK;
 }
@@ -64,19 +67,11 @@ rv_ringbuf_status_t rv_ringbuf_get(rv_ringbuf_t *rb, uint8_t *byte)
         return RV_RINGBUF_ERR_EMPTY;
     }
 
+    __COMPILER_BARRIER();
     *byte = rb->storage[tail];
+    __COMPILER_BARRIER();
     rb->tail = rv_ringbuf_next_index(rb, tail);
     return RV_RINGBUF_OK;
-}
-
-void rv_ringbuf_put_byte_cb(uint8_t byte, void *ctx)
-{
-    rv_ringbuf_t *rb = (rv_ringbuf_t *)ctx;
-    if (rb == NULL) {
-        return;
-    }
-
-    (void)rv_ringbuf_put(rb, byte);
 }
 
 uint32_t rv_ringbuf_available(const rv_ringbuf_t *rb)
@@ -91,31 +86,4 @@ uint32_t rv_ringbuf_available(const rv_ringbuf_t *rb)
         return head - tail;
     }
     return rb->size - tail + head;
-}
-
-uint32_t rv_ringbuf_free_space(const rv_ringbuf_t *rb)
-{
-    if (!rv_ringbuf_is_valid(rb)) {
-        return 0U;
-    }
-
-    return (rb->size - 1U) - rv_ringbuf_available(rb);
-}
-
-bool rv_ringbuf_is_empty(const rv_ringbuf_t *rb)
-{
-    if (!rv_ringbuf_is_valid(rb)) {
-        return true;
-    }
-
-    return rb->head == rb->tail;
-}
-
-bool rv_ringbuf_is_full(const rv_ringbuf_t *rb)
-{
-    if (!rv_ringbuf_is_valid(rb)) {
-        return false;
-    }
-
-    return rv_ringbuf_next_index(rb, rb->head) == rb->tail;
 }
