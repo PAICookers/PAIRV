@@ -4,8 +4,6 @@
 #define _EVALSOC_UART_H
 
 #include "evalsoc.h"
-#include <stdbool.h>
-#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,11 +66,6 @@ int32_t uart_init(UART_TypeDef *uart, uint32_t baudrate);
 int32_t uart_config_stopbit(UART_TypeDef *uart, UART_STOP_BIT stopbit);
 int32_t uart_write(UART_TypeDef *uart, uint8_t val);
 uint8_t uart_read(UART_TypeDef *uart);
-int32_t uart_write_byte(UART_TypeDef *uart, uint8_t byte);
-int32_t uart_read_byte(UART_TypeDef *uart, uint8_t *byte);
-int32_t uart_read_byte_nonblock(UART_TypeDef *uart, uint8_t *byte);
-bool uart_tx_fifo_is_full(UART_TypeDef *uart);
-bool uart_rx_fifo_is_empty(UART_TypeDef *uart);
 int32_t uart_set_tx_watermark(UART_TypeDef *uart, uint32_t watermark);
 int32_t uart_enable_txint(UART_TypeDef *uart);
 int32_t uart_disable_txint(UART_TypeDef *uart);
@@ -81,9 +74,6 @@ int32_t uart_enable_rxint(UART_TypeDef *uart);
 int32_t uart_disable_rxint(UART_TypeDef *uart);
 int32_t uart_get_status(UART_TypeDef *uart);
 int32_t uart_clear_status(UART_TypeDef *uart, uint32_t mask);
-uint32_t uart_irq_pending(UART_TypeDef *uart);
-bool uart_rx_irq_pending(UART_TypeDef *uart);
-bool uart_tx_irq_pending(UART_TypeDef *uart);
 int32_t uart_drain_rx_fifo(UART_TypeDef *uart, uart_rx_byte_fn cb, void *ctx);
 
 #ifdef __cplusplus

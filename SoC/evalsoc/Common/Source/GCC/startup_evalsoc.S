@@ -44,6 +44,7 @@
 #endif
 .endm
 
+#ifdef CFG_HAS_CLIC
     .section .text.vtable
 
     .weak eclic_msip_handler
@@ -145,6 +146,7 @@ vector_base:
     .option pop
 
     .size vector_base, . - vector_base
+#endif
 
     .section .text.init
     .globl _start
@@ -205,6 +207,7 @@ _start:
     la sp, _sp
 #endif
 
+#if !(defined(CPU_SERIES) && CPU_SERIES == 100)
     /*
      * Set the the NMI base mnvec to share
      * with mtvec by setting CSR_MMISC_CTL
@@ -221,6 +224,7 @@ _start:
     csrs CSR_MMISC_CTL, t0
 #else
     csrc CSR_MMISC_CTL, t0
+#endif
 #endif
 
     /*
@@ -257,13 +261,18 @@ _start:
     /* This should be only used by nuclei_gen which generate a correct cpufeature.h */
     /* We use CPU_ISA macro to determine whether this cpufeature.h is generated or hand written */
     /* This is used to speedup data loading */
+#if !defined(SMP_CPU_CNT)
 #ifdef CPU_ISA
+#ifndef CFG_HAS_ECC
+    /* Only enable i/dcache when ecc not present */
 #ifdef CFG_HAS_ICACHE
     csrsi CSR_MCACHE_CTL, MCACHE_CTL_IC_EN
 #endif
 #ifdef CFG_HAS_DCACHE
     li t0, MCACHE_CTL_DC_EN
     csrs CSR_MCACHE_CTL, t0
+#endif
+#endif
 #endif
 #endif
 
@@ -300,6 +309,8 @@ __init_common:
     addi a0, a0, 4
     addi a1, a1, 4
     bltu a1, a2, 1b
+    /* execute fence.i to make sure cpu can see updated code */
+    fence.i
 2:
     /* Load data section */
     la a0, _data_lma
@@ -314,6 +325,7 @@ __init_common:
     addi a0, a0, 4
     addi a1, a1, 4
     bltu a1, a2, 1b
+#if !(defined(CFG_SIMULATION_BSSZERO) && CFG_SIMULATION_BSSZERO == 0)
 2:
     /* Clear bss section */
     la a0, __bss_start
@@ -323,6 +335,7 @@ __init_common:
     sw zero, (a0)
     addi a0, a0, 4
     bltu a0, a1, 1b
+#endif
 2:
 
     .size __init_common, . - __init_common
@@ -362,9 +375,11 @@ __skip_init:
      */
     call _premain_init
 
+#if !(defined(CPU_SERIES) && CPU_SERIES == 100)
     /* BPU cold bringup need time, so enable BPU before enter to main */
     li t0, MMISC_CTL_BPU
     csrs CSR_MMISC_CTL, t0
+#endif
 
     // Interrupt is still disabled here
     /* ===== Call SMP Main Function  ===== */
@@ -377,7 +392,11 @@ __skip_init:
 #else
 #ifdef RTOS_RTTHREAD
     // Call entry function when using RT-Thread
+#ifdef SMODE_RTOS
+    call main_entry
+#else
     call entry
+#endif
 #else
     call main
 #endif
@@ -416,7 +435,11 @@ smp_main:
 2:
 #ifdef RTOS_RTTHREAD
     // Call entry function when using RT-Thread
+#ifdef SMODE_RTOS
+    call main_entry
+#else
     call entry
+#endif
 #else
     call main
 #endif

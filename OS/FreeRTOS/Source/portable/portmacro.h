@@ -67,6 +67,19 @@ typedef unsigned long UBaseType_t;
 #define configTICK_TYPE_WIDTH_IN_BITS TICK_TYPE_WIDTH_32_BITS
 #endif
 
+/* TODO If you dont want features provided by configMAX_SYSCALL_INTERRUPT_PRIORITY */
+/* If configMAX_SYSCALL_INTERRUPT_PRIORITY >= 255, interrupt disable/enable will use MSTATUS.MIE,
+ * otherwise interrupt disable/enable will use ECLIC.MTH to control interrupt threshold,
+ * this will make Interrupts that do not call API functions can execute at priorities above configMAX_SYSCALL_INTERRUPT_PRIORITY
+ * and therefore never be delayed by the RTOS kernel execution.
+ * For configMAX_SYSCALL_INTERRUPT_PRIORITY set value, please see port.c for details
+ * About FreeRTOS configuration, see see https://www.freertos.org/zh-cn-cmn-s/Documentation/02-Kernel/03-Supported-devices/02-Customization
+ */
+#ifndef configMAX_SYSCALL_INTERRUPT_PRIORITY
+// See function prvCheckMaxSysCallPrio and prvCalcMaxSysCallMTH
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY    255
+#endif
+
 // configTICK_TYPE_WIDTH_IN_BITS
 // see https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/03db672b8f45db24aa99f12051f7cf86746b9ed9/examples/template_configuration/FreeRTOSConfig.h#L124-L139
 #if ( configTICK_TYPE_WIDTH_IN_BITS == TICK_TYPE_WIDTH_16_BITS )
@@ -84,7 +97,14 @@ typedef uint64_t TickType_t;
 /* Architecture specifics. */
 #define portSTACK_GROWTH            ( -1 )
 #define portTICK_PERIOD_MS          ( ( TickType_t ) 1000 / configTICK_RATE_HZ )
-#define portBYTE_ALIGNMENT          8
+
+#ifndef __riscv_32e
+/* The stack grows downwards (towards lower addresses) and the stack pointer shall be aligned to a 128-bit boundary upon procedure entry. */
+#define portBYTE_ALIGNMENT          16
+#else
+/* ILP32E calling convention The stack pointer need only be aligned to a 32-bit boundary */
+#define portBYTE_ALIGNMENT          4
+#endif
 /*-----------------------------------------------------------*/
 
 /* Scheduler utilities. */
@@ -101,11 +121,17 @@ typedef uint64_t TickType_t;
 #define portYIELD_FROM_ISR( x )                     portEND_SWITCHING_ISR( x )
 /*-----------------------------------------------------------*/
 
-
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY >= 255
+#define portSET_INTERRUPT_MASK_FROM_ISR()       ({ BaseType_t _tmpstatus = __RV_CSR_READ_CLEAR(CSR_MSTATUS, MSTATUS_MIE); __RWMB(); _tmpstatus; })
+#define portCLEAR_INTERRUPT_MASK_FROM_ISR(x)    { __RV_CSR_SET(CSR_MSTATUS, ((x) & MSTATUS_MIE)); __RWMB(); }
+#define portDISABLE_INTERRUPTS()                { __RV_CSR_CLEAR(CSR_MSTATUS, MSTATUS_MIE); __RWMB(); }
+#define portENABLE_INTERRUPTS()                 { __RV_CSR_SET(CSR_MSTATUS, MSTATUS_MIE); __RWMB(); }
+#else
 #define portSET_INTERRUPT_MASK_FROM_ISR()       ulPortRaiseBASEPRI()
 #define portCLEAR_INTERRUPT_MASK_FROM_ISR(x)    vPortSetBASEPRI(x)
 #define portDISABLE_INTERRUPTS()                vPortRaiseBASEPRI()
 #define portENABLE_INTERRUPTS()                 vPortSetBASEPRI(0)
+#endif
 
 /*-----------------------------------------------------------*/
 
@@ -139,6 +165,7 @@ extern void vPortValidateInterruptPriority(void);
 #define portFORCE_INLINE            inline __attribute__(( always_inline))
 #endif
 
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
 /* This variable should not be set in any of the FreeRTOS application
   only used internal of FreeRTOS Port code */
 extern uint8_t uxMaxSysCallMTH;
@@ -146,8 +173,10 @@ extern uint8_t uxMaxSysCallMTH;
 /*-----------------------------------------------------------*/
 portFORCE_INLINE static void vPortRaiseBASEPRI(void)
 {
+    unsigned long saved_status = __RV_CSR_READ_CLEAR(CSR_MSTATUS, MSTATUS_MIE);
     ECLIC_SetMth(uxMaxSysCallMTH);
     __RWMB();
+    __RV_CSR_WRITE(CSR_MSTATUS, saved_status);
 }
 
 /*-----------------------------------------------------------*/
@@ -155,10 +184,12 @@ portFORCE_INLINE static void vPortRaiseBASEPRI(void)
 portFORCE_INLINE static uint8_t ulPortRaiseBASEPRI(void)
 {
     uint8_t ulOriginalBASEPRI;
+    unsigned long saved_status = __RV_CSR_READ_CLEAR(CSR_MSTATUS, MSTATUS_MIE);
 
     ulOriginalBASEPRI = ECLIC_GetMth();
     ECLIC_SetMth(uxMaxSysCallMTH);
     __RWMB();
+    __RV_CSR_WRITE(CSR_MSTATUS, saved_status);
 
     /* This return might not be reached but is necessary to prevent compiler
     warnings. */
@@ -168,19 +199,30 @@ portFORCE_INLINE static uint8_t ulPortRaiseBASEPRI(void)
 
 portFORCE_INLINE static void vPortSetBASEPRI(uint8_t ulNewMaskValue)
 {
+    unsigned long saved_status = __RV_CSR_READ_CLEAR(CSR_MSTATUS, MSTATUS_MIE);
+
     ECLIC_SetMth(ulNewMaskValue);
     __RWMB();
+    __RV_CSR_WRITE(CSR_MSTATUS, saved_status);
 }
+#endif
+
 /*-----------------------------------------------------------*/
 
-#define portMEMORY_BARRIER()                            __asm volatile( "" ::: "memory" )
+#define portMEMORY_BARRIER()                            __RWMB()
 
 #if ( configNUMBER_OF_CORES == 1 )
     extern UBaseType_t uxCriticalNesting;
-    #define portGET_CRITICAL_NESTING_COUNT()            ( uxCriticalNesting )
-    #define portSET_CRITICAL_NESTING_COUNT( x )         ( uxCriticalNesting = ( x ) )
-    #define portINCREMENT_CRITICAL_NESTING_COUNT()      ( uxCriticalNesting++ )
-    #define portDECREMENT_CRITICAL_NESTING_COUNT()      ( uxCriticalNesting-- )
+    #define portGET_CORE_ID()                               0
+    #define portGET_CRITICAL_NESTING_COUNT( xCoreID )       ( uxCriticalNesting )
+    #define portSET_CRITICAL_NESTING_COUNT( xCoreID, x )    ( uxCriticalNesting = ( x ) )
+    #define portINCREMENT_CRITICAL_NESTING_COUNT( xCoreID ) ( uxCriticalNesting++ )
+    #define portDECREMENT_CRITICAL_NESTING_COUNT( xCoreID ) ( uxCriticalNesting-- )
+    #define portGET_ISR_LOCK( xCoreID )
+    #define portRELEASE_ISR_LOCK( xCoreID )
+    #define portGET_TASK_LOCK( xCoreID )
+    #define portRELEASE_TASK_LOCK( xCoreID )
+
     /* Critical section management. */
     extern void vPortEnterCritical(void);
     extern void vPortExitCritical(void);
@@ -192,10 +234,10 @@ portFORCE_INLINE static void vPortSetBASEPRI(uint8_t ulNewMaskValue)
     #define portGET_CORE_ID()                           __get_hart_index()
 
     /* Set the interrupt mask. */
-    #define portSET_INTERRUPT_MASK()                    ulPortRaiseBASEPRI()
+    #define portSET_INTERRUPT_MASK()                    portSET_INTERRUPT_MASK_FROM_ISR()
 
     /* Clear the interrupt mask. */
-    #define portCLEAR_INTERRUPT_MASK( x )               vPortSetBASEPRI(x)
+    #define portCLEAR_INTERRUPT_MASK( x )               portCLEAR_INTERRUPT_MASK_FROM_ISR(x)
 
     /* Request the core ID x to yield. */
     #define portYIELD_CORE( x )              \
@@ -213,23 +255,23 @@ portFORCE_INLINE static void vPortSetBASEPRI(uint8_t ulNewMaskValue)
 
     typedef volatile uint32_t spin_lock_t;
     extern spin_lock_t hw_sync_locks[portRTOS_SPINLOCK_COUNT];
-    extern void vPortRecursiveLock(unsigned long ulLockNum, spin_lock_t *pxSpinLock, BaseType_t uxAcquire);
+    extern void vPortRecursiveLock(BaseType_t xCoreID, unsigned long ulLockNum, spin_lock_t *pxSpinLock, BaseType_t uxAcquire);
 
     /* Acquire the TASK lock. TASK lock is a recursive lock.
      * It should be able to be locked by the same core multiple times. */
-    #define portGET_TASK_LOCK()                         vPortRecursiveLock( 1, &hw_sync_locks[1], pdTRUE )
+    #define portGET_TASK_LOCK( xCoreID )                vPortRecursiveLock(xCoreID, 1, &hw_sync_locks[1], pdTRUE )
 
     /* Release the TASK lock. If a TASK lock is locked by the same core multiple times,
      * it should be released as many times as it is locked. */
-    #define portRELEASE_TASK_LOCK()                     vPortRecursiveLock( 1, &hw_sync_locks[1], pdFALSE )
+    #define portRELEASE_TASK_LOCK( xCoreID )            vPortRecursiveLock(xCoreID, 1, &hw_sync_locks[1], pdFALSE )
 
     /* Acquire the ISR lock. ISR lock is a recursive lock.
      * It should be able to be locked by the same core multiple times. */
-   #define portGET_ISR_LOCK()                           vPortRecursiveLock( 0, &hw_sync_locks[0], pdTRUE )
+   #define portGET_ISR_LOCK( xCoreID )                  vPortRecursiveLock(xCoreID, 0, &hw_sync_locks[0], pdTRUE )
 
     /* Release the ISR lock. If a ISR lock is locked by the same core multiple times, \
      * it should be released as many times as it is locked. */
-    #define portRELEASE_ISR_LOCK()                      vPortRecursiveLock( 0, &hw_sync_locks[0], pdFALSE )
+    #define portRELEASE_ISR_LOCK( xCoreID )             vPortRecursiveLock(xCoreID, 0, &hw_sync_locks[0], pdFALSE )
 
     extern void vTaskEnterCritical( void );
     extern void vTaskExitCritical( void );
@@ -242,10 +284,10 @@ portFORCE_INLINE static void vPortSetBASEPRI(uint8_t ulNewMaskValue)
 
     /* Critical nesting count management. */
     extern UBaseType_t uxCriticalNestings[ configNUMBER_OF_CORES ];
-    #define portGET_CRITICAL_NESTING_COUNT()            ( uxCriticalNestings[ portGET_CORE_ID() ] )
-    #define portSET_CRITICAL_NESTING_COUNT( x )         ( uxCriticalNestings[ portGET_CORE_ID() ] = ( x ) )
-    #define portINCREMENT_CRITICAL_NESTING_COUNT()      ( uxCriticalNestings[ portGET_CORE_ID() ]++ )
-    #define portDECREMENT_CRITICAL_NESTING_COUNT()      ( uxCriticalNestings[ portGET_CORE_ID() ]-- )
+    #define portGET_CRITICAL_NESTING_COUNT( xCoreID )   ( uxCriticalNestings[ ( xCoreID ) ] )
+    #define portSET_CRITICAL_NESTING_COUNT( xCoreID, x )  ( uxCriticalNestings[ ( xCoreID ) ] = ( x ) )
+    #define portINCREMENT_CRITICAL_NESTING_COUNT( xCoreID ) ( uxCriticalNestings[ ( xCoreID ) ]++ )
+    #define portDECREMENT_CRITICAL_NESTING_COUNT( xCoreID ) ( uxCriticalNestings[ ( xCoreID ) ]-- )
 
 #endif /* if ( configNUMBER_OF_CORES > 1 ) */
 

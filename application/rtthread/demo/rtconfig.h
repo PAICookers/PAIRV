@@ -3,18 +3,28 @@
 #ifndef __RTTHREAD_CFG_H__
 #define __RTTHREAD_CFG_H__
 
-// <<< Use Configuration Wizard in Context Menu >>>
+#include <rtthread.h>
 
+#if defined(__CC_ARM) || defined(__CLANG_ARM)
+#include "RTE_Components.h"
+
+#if defined(RTE_USING_FINSH)
+#define RT_USING_FINSH
+#endif //RTE_USING_FINSH
+
+#endif //(__CC_ARM) || (__CLANG_ARM)
+
+// <<< Use Configuration Wizard in Context Menu >>>
 // <h>Basic Configuration
 // <o>Maximal level of thread priority <8-256>
 //  <i>Default: 32
-#define RT_THREAD_PRIORITY_MAX  32
+#define RT_THREAD_PRIORITY_MAX  8
 // <o>OS tick per second
 //  <i>Default: 1000   (1ms)
-#define RT_TICK_PER_SECOND  1000
+#define RT_TICK_PER_SECOND  100
 // <o>Alignment size for CPU architecture data access
 //  <i>Default: 4
-#define RT_ALIGN_SIZE   4
+#define RT_ALIGN_SIZE   8
 // <o>the max length of object name<2-16>
 //  <i>Default: 8
 #define RT_NAME_MAX    8
@@ -27,7 +37,13 @@
 
 // <o>the stack size of main thread<1-4086>
 //  <i>Default: 512
-#define RT_MAIN_THREAD_STACK_SIZE     256
+#define RT_MAIN_THREAD_STACK_SIZE     1024
+
+// <o>the stack size of main thread<1-4086>
+//  <i>Default: 128
+#define IDLE_THREAD_STACK_SIZE        512
+
+
 
 // </h>
 
@@ -60,7 +76,7 @@
 // <i> Enables user timers
 #define RT_USING_TIMER_SOFT         0
 #if RT_USING_TIMER_SOFT == 0
-    #undef RT_USING_TIMER_SOFT
+#undef RT_USING_TIMER_SOFT
 #endif
 // <o>The priority level of timer thread <0-31>
 //  <i>Default: 4
@@ -85,10 +101,6 @@
 // </c>
 // <c1>Using MailBox
 //  <i>Using MailBox
-//#define RT_USING_SIGNALS
-// </c>
-// <c1>Using Signals
-//  <i>Using Signals
 #define RT_USING_MAILBOX
 // </c>
 // <c1>Using Message Queue
@@ -98,15 +110,13 @@
 // </h>
 
 // <h>Memory Management Configuration
-// <c1>Memory Pool Management
-//  <i>Memory Pool Management
-//#define RT_USING_MEMPOOL
-// </c>
-// <c1>Dynamic Heap Management(Algorithm: small memory )
+// <c1>Dynamic Heap Management
 //  <i>Dynamic Heap Management
-#define RT_USING_HEAP
+//#define RT_USING_HEAP
+// </c>
+// <c1>using small memory
+//  <i>using small memory
 #define RT_USING_SMALL_MEM
-#define RT_USING_SMALL_MEM_AS_HEAP
 // </c>
 // <c1>using tiny size of memory
 //  <i>using tiny size of memory
@@ -122,22 +132,30 @@
 // <o>the buffer size of console <1-1024>
 //  <i>the buffer size of console
 //  <i>Default: 128  (128Byte)
-#define RT_CONSOLEBUF_SIZE          256
+#define RT_CONSOLEBUF_SIZE          128
 // </h>
 
-// <h>FinSH Configuration
-// <c1>include finsh config
-//  <i>Select this choice if you using FinSH
-//#include "finsh_config.h"
-// </c>
-// </h>
+#if defined(RT_USING_FINSH)
+#define FINSH_USING_MSH
+#define FINSH_USING_MSH_ONLY
+// <h>Finsh Configuration
+// <o>the priority of finsh thread <1-7>
+//  <i>the priority of finsh thread
+//  <i>Default: 6
+#define __FINSH_THREAD_PRIORITY     5
+#define FINSH_THREAD_PRIORITY       (RT_THREAD_PRIORITY_MAX / 8 * __FINSH_THREAD_PRIORITY + 1)
+// <o>the stack of finsh thread <1-4096>
+//  <i>the stack of finsh thread
+//  <i>Default: 4096  (4096Byte)
+#define FINSH_THREAD_STACK_SIZE     512
+// <o>the history lines of finsh thread <1-32>
+//  <i>the history lines of finsh thread
+//  <i>Default: 5
+#define FINSH_HISTORY_LINES         1
 
-// <h>Device Configuration
-// <c1>using device framework
-//  <i>using device framework
-//#define RT_USING_DEVICE
-// </c>
+#define FINSH_USING_SYMTAB
 // </h>
+#endif
 
 // <<< end of configuration section >>>
 

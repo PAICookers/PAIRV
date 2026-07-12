@@ -1,11 +1,11 @@
-PROGRAM ?= application/baremetal/helloworld
+PROGRAM := baremetal/helloworld
 
 PARALLEL ?=
 
 .PHONY: __help ctags cleanall buildall tags
 __help:
 	@echo "Help about Build/Run/Debug/Clean PAIRV Nuclei N307FD Application"
-	@echo "make [PROGRAM=/path/to/app] help                         Show the selected application's build help"
+	@echo "make [PROGRAM=/path/to/app] help                         Show Build System Help Message"
 	@echo "make [EXTRA_APP_ROOTDIRS=/path/to/extraapps] cleanall    Clean all the applications"
 	@echo "make [EXTRA_APP_ROOTDIRS=/path/to/extraapps] buildall    Rebuild all the applications"
 	@echo "Examples:"
@@ -39,9 +39,6 @@ PROGS_DIRS := $(sort $(PROGS_makefile) $(PROGS_Makefile))
 CLEAN_DIRS_RULES := $(addprefix __CLEAN__, $(PROGS_DIRS))
 BUILD_DIRS_RULES := $(addprefix __BUILD__, $(PROGS_DIRS))
 
-VALID_PROGRAM_MAKEFILES := $(wildcard $(PROGRAM)/Makefile $(PROGRAM)/makefile)
-VALID_PROGRAM := $(patsubst %/,%,$(dir $(firstword $(VALID_PROGRAM_MAKEFILES))))
-
 ifeq ($(VALID_PROGRAM_MAKEFILE), )
 APP_PROGRAM=application/$(PROGRAM)
 VALID_PROGRAM=$(wildcard $(APP_PROGRAM))
@@ -56,17 +53,17 @@ cleanall: $(CLEAN_DIRS_RULES)
 buildall: $(BUILD_DIRS_RULES)
 
 $(CLEAN_DIRS_RULES):
-	$(MAKE) -C $(patsubst __CLEAN__%, %, $@) clean
+	make -C $(patsubst __CLEAN__%, %, $@) clean
 
 $(BUILD_DIRS_RULES):
-	$(MAKE) -C $(patsubst __BUILD__%, %, $@) clean
-	$(MAKE) -C $(patsubst __BUILD__%, %, $@) $(PARALLEL) all
+	make -C $(patsubst __BUILD__%, %, $@) clean
+	make -C $(patsubst __BUILD__%, %, $@) $(PARALLEL) all
 
 $(VALID_SDK_RULES):
-	$(MAKE) -C $(VALID_PROGRAM) $@
+	make -C $(VALID_PROGRAM) $@
 
 # Only works in linux
-# Exuberant Ctags or compatible ctags is required to be installed
+# Exuberant Ctags is required to be installed
 tags ctags:
 	ctags -o tags `find . -name '*.[chS]' -print`
 	rm -f ctags

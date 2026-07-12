@@ -1,3 +1,5 @@
+TARGET_ELF := $(TARGET).elf
+
 ALL_CSRCS = $(filter-out $(wildcard $(EXCLUDE_SRCS)), $(sort $(wildcard $(C_SRCS)) $(call get_csrcs, $(SRCDIRS) $(C_SRCDIRS))))
 ALL_CXXSRCS = $(filter-out $(wildcard $(EXCLUDE_SRCS)), $(sort $(wildcard $(CXX_SRCS)) $(call get_cxxsrcs, $(SRCDIRS) $(CXX_SRCDIRS))))
 ALL_ASMSRCS = $(filter-out $(wildcard $(EXCLUDE_SRCS)), $(sort $(wildcard $(ASM_SRCS)) $(call get_asmsrcs, $(SRCDIRS) $(ASM_SRCDIRS))))
@@ -8,11 +10,30 @@ ALL_CXX_OBJS := $(ALL_CXXSRCS:=.o)
 
 ALL_OBJS += $(ALL_ASM_OBJS) $(ALL_C_OBJS) $(ALL_CXX_OBJS)
 
+# Application Specific compilation flags control
+# If APPDIRS is defined, we will collect sources in those directories
+# and apply APP_* flags to them
+ifneq ($(APPDIRS),)
+APP_CSRCS = $(call get_csrcs, $(APPDIRS))
+APP_CXXSRCS = $(call get_cxxsrcs, $(APPDIRS))
+APP_ASMSRCS = $(call get_asmsrcs, $(APPDIRS))
+
+APP_ASM_OBJS := $(APP_ASMSRCS:=.o)
+APP_C_OBJS := $(APP_CSRCS:=.o)
+APP_CXX_OBJS := $(APP_CXXSRCS:=.o)
+
+$(APP_C_OBJS): CFLAGS += $(_REAL_APP_CFLAGS) $(_REAL_APP_COMMON_FLAGS)
+$(APP_CXX_OBJS): CXXFLAGS += $(_REAL_APP_CXXFLAGS) $(_REAL_APP_COMMON_FLAGS)
+$(APP_ASM_OBJS): ASMFLAGS += $(_REAL_APP_ASMFLAGS) $(_REAL_APP_COMMON_FLAGS)
+endif
+
 ALL_DEPS := $(ALL_OBJS:=.d)
 ALL_GCNOS := $(ALL_OBJS:.o=.gcno)
+ALL_GCDAS := $(ALL_OBJS:.o=.gcda)
+ALL_GCOVS := $(ALL_OBJS:.o=.gcov)
 
 CLEAN_OBJS += $(TARGET).elf $(TARGET).map $(TARGET).bin $(TARGET).dump $(TARGET).dasm \
-		$(TARGET).srec $(TARGET).hex $(TARGET).verilog openocd.log $(wildcard $(ALL_OBJS) $(ALL_DEPS) $(ALL_GCNOS))
+		$(TARGET).srec $(TARGET).hex $(TARGET).verilog gmon.out openocd.log $(wildcard $(ALL_OBJS) $(ALL_DEPS) $(ALL_GCNOS) $(ALL_GCDAS) $(ALL_GCOVS))
 REAL_CLEAN_OBJS = $(subst /,$(PS), $(CLEAN_OBJS))
 
 # Default goal, placed before dependency includes
@@ -53,48 +74,40 @@ showtoolver:
 help:
 	@$(ECHO) "PAIRV build help"
 	@$(ECHO) "== For detailed user guide, please check https://doc.nucleisys.com/nuclei_sdk/"
-	@$(ECHO) "== Common variables in this checkout =="
+	@$(ECHO) "== Make variables used in PAIRV =="
 	@$(ECHO) "SOC:         Defaults to evalsoc"
 	@$(ECHO) "BOARD:       Defaults to nuclei_fpga_eval"
 	@$(ECHO) "CORE:        Defaults to n307fd in evalsoc"
-	@$(ECHO) "ARCH_EXT:    Extra ISA extension suffix appended to the selected core arch"
 	@$(ECHO) "DOWNLOAD:    This checkout defaults to ilmflashxip; common values are ilm/flash/flashxip/ilmflashxip"
-	@$(ECHO) "PROGRAM:     Application directory, for example application/baremetal/helloworld"
-	@$(ECHO) "V:           V=1 verbose make"
+	@$(ECHO) "V:           V=1 verbose make, will print more information, by default V=0"
 	@$(ECHO) "== How to Use with Make =="
 	@$(ECHO) "1. Build Application:"
-	@$(ECHO) "make [PROGRAM=<application path>] all"
+	@$(ECHO) "all [PROGRAM=flash/flashxip/ilm]"
 	@$(ECHO) "   Build a software program to load with the debugger."
 	@$(ECHO) "2. Upload Application to Board using OpenOCD and GDB:"
-	@$(ECHO) "make [PROGRAM=<application path>] upload"
+	@$(ECHO) "upload [PROGRAM=flash/flashxip/ilm]"
 	@$(ECHO) "   Launch OpenOCD to flash your program to the on-board Flash."
 	@$(ECHO) "3:(Option 1) Debug Application using OpenOCD and GDB"
-	@$(ECHO) "  3.1: make run_openocd"
-	@$(ECHO) "  3.2: make [PROGRAM=<application path>] run_gdb"
+	@$(ECHO) "  3.1: run_openocd"
+	@$(ECHO) "  3.2: run_gdb [PROGRAM=flash/flashxip/ilm]"
 	@$(ECHO) "   Step 1: Launch OpenOCD for Debugger connection: make run_openocd"
 	@$(ECHO) "   Step 2: Launch GDB to connect openocd server, you can set breakpoints using gdb and debug it."
 	@$(ECHO) "           If you want to load your application, you need to run load in gdb command terminal"
 	@$(ECHO) "           to load your program, then use gdb to debug it."
 	@$(ECHO) "3:(Option 2) Debug Application using OpenOCD and GDB"
-	@$(ECHO) "make [PROGRAM=<application path>] debug"
+	@$(ECHO) "debug [PROGRAM=flash/flashxip/ilm]"
 	@$(ECHO) "   Launch GDB and OpenOCD to debug your application on-board, you can set breakpoints using gdb and debug it."
 	@$(ECHO) "           If you want to load your application, you need to run load in gdb command terminal"
 	@$(ECHO) "           to load your program, then use gdb to debug it."
 	@$(ECHO) ""
 	@$(ECHO) "== Example Usage =="
 	@$(ECHO) "1. cd <NUCLEI_SDK_ROOT>/application/baremetal/helloworld"
-	@$(ECHO) "2. Build with the checkout default: make all"
-	@$(ECHO) "3. Build for ILM download mode: make DOWNLOAD=ilm all"
-	@$(ECHO) "4. Download application to board: make DOWNLOAD=ilm upload"
+	@$(ECHO) "2. Build for ILM download mode: make DOWNLOAD=ilm all"
+	@$(ECHO) "3. Download application to board: make DOWNLOAD=ilm upload"
 	@$(ECHO) "4.(Option 1) Debug application:"
 	@$(ECHO) "   4.1 Terminal One: make DOWNLOAD=ilm run_openocd"
 	@$(ECHO) "   4.2 Terminal Two: make DOWNLOAD=ilm run_gdb"
-	@$(ECHO) "5.(Option 2) Debug application: make DOWNLOAD=ilm debug"
-	@$(ECHO) ""
-	@$(ECHO) "== Additional available targets in this checkout =="
-	@$(ECHO) "help clean info showflags showtoolver bin size dasm"
-	@$(ECHO) "run_qemu run_qemu_debug run_xlmodel run_xlspike run_xlspike_rbb run_xlspike_openocd"
-	@$(ECHO) "These extra targets depend on the local tool setup and selected SoC/download mode."
+	@$(ECHO) "4.(Option 2) Debug application: make DOWNLOAD=ilm debug"
 	@$(ECHO) ""
 
 
@@ -115,7 +128,7 @@ $(ALL_CXX_OBJS): %.o: % $(COMMON_PREREQS)
 	$(TRACE_COMPILE)
 	$(Q)$(CXX) $(CXXFLAGS) $(MKDEP_OPT) -c -o $@ $<
 
-dasm: $(TARGET).elf
+dasm: $(TARGET_ELF)
 	-$(OBJDUMP) -S -d -M no-aliases $< > $(TARGET).dump
 	-$(OBJDUMP) -d -M no-aliases $< > $(TARGET).dasm
 	-$(OBJCOPY) $< -O ihex $(TARGET).hex
@@ -124,13 +137,13 @@ ifeq ($(TOOLCHAIN),nuclei_gnu)
 	-$(OBJCOPY) $< -O verilog $(TARGET).verilog
 endif
 
-bin: $(TARGET).elf
+bin: $(TARGET_ELF)
 	$(OBJCOPY) $< -O binary $(TARGET).bin
 
-size: $(TARGET).elf
+size: $(TARGET_ELF)
 	$(Q)$(SIZE) $<
 
-upload: $(TARGET).elf
+upload: $(TARGET_ELF)
 	@$(ECHO) "Download and run $<"
 	$(GDB) -ex "set remotetimeout 240" -ex "target remote $(GDBREMOTE)" $(GDB_UPLOAD_ARGS) $(GDB_UPLOAD_CMDS)
 
@@ -138,38 +151,38 @@ run_openocd:
 	@$(ECHO) "Start openocd server"
 	$(OPENOCD) $(OPENOCD_PORT_ARGS) $(OPENOCD_ARGS)
 
-run_gdb: $(TARGET).elf
+run_gdb: $(TARGET_ELF)
 	@$(ECHO) "Run gdb to connect openocd server and debug"
 	$(GDB) $< $(GDB_ARGS) $(GDB_CMDS)
 
-debug: $(TARGET).elf
+debug: $(TARGET_ELF)
 	@$(ECHO) "Download and debug $<"
 	$(GDB) $< -ex "set remotetimeout 240" -ex "target remote $(GDBREMOTE)"
 
 # just for evalsoc purpose
 # https://doc.nucleisys.com/nuclei_tools/qemu/intro.html
-run_qemu: $(TARGET).elf
+run_qemu: $(TARGET_ELF)
 	@$(ECHO) "Run program $< on $(QEMU)"
 	$(QEMU) -M $(QEMU_MACHINE) -cpu $(QEMU_CPU) $(QEMU_OPT) -nodefaults -nographic -serial stdio $(QEMU_ELF_OPT) $<
 
 # just for evalsoc purpose
-run_qemu_debug: $(TARGET).elf
+run_qemu_debug: $(TARGET_ELF)
 	@$(ECHO) "Run program $< on $(QEMU), and waiting for gdb connection on port $(GDB_PORT)"
 	@$(ECHO) "Then you can open a new terminal in the same directory and run make target: run_gdb to connect to this gdb connection"
 	$(QEMU) -M $(QEMU_MACHINE) -cpu $(QEMU_CPU) $(QEMU_OPT) -nodefaults -nographic -serial stdio $(QEMU_ELF_OPT) $< -S -gdb tcp::$(GDB_PORT)
 
 # just for evalsoc purpose using xlmodel
 # https://doc.nucleisys.com/nuclei_tools/xlmodel/intro.html
-run_xlmodel: $(TARGET).elf
+run_xlmodel: $(TARGET_ELF)
 	@$(ECHO) "Run program $< on $(XLMODEL)"
 	$(XLMODEL) $(XLMODEL_OPT) $(XLMODEL_EXTOPT) $<
 
 # just works on evalsoc purpose, experimental support
-run_xlspike: $(TARGET).elf
+run_xlspike: $(TARGET_ELF)
 	@$(ECHO) "Run program $< on $(XLSPIKE)"
 	$(XLSPIKE) $(XLSPIKE_OPT) --isa $(XLSPIKE_ARCH) $<
 
-run_xlspike_rbb: $(TARGET).elf
+run_xlspike_rbb: $(TARGET_ELF)
 	@$(ECHO) "Run program $< on $(XLSPIKE), and waiting for remote bitbang connection on port $(RBB_PORT)"
 	@$(ECHO) "Then you need open a new terminal in the same directory and run make target: run_xlspike_openocd to connect to this remote bitbang connection"
 	$(XLSPIKE) $(XLSPIKE_OPT) --rbb-port=$(RBB_PORT) -H --isa $(XLSPIKE_ARCH) $<

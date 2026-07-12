@@ -69,6 +69,11 @@ NOGC ?=
 BANNER ?=
 ## If AUTOVEC=0, it will try to disable compiler auto vectorization as much as possible
 AUTOVEC ?=
+## ICOUNT_OPT: QEMU instruction count option for timing emulation
+## Default: shift=0 (each virtual instruction = 1 host clock cycle)
+## Examples: ICOUNT_OPT=shift=1 for slower timing, ICOUNT_OPT="" to disable icount
+## See https://www.qemu.org/docs/master/system/invocation.html
+ICOUNT_OPT ?= shift=0
 
 # Directory variables for NMSIS, SoC/RTOS chosen, Middleware Components
 # NUCLEI_SDK_SOC and NUCLEI_SDK_RTOS variables need to be set deferred
@@ -80,6 +85,27 @@ NUCLEI_SDK_MIDDLEWARE := $(NUCLEI_SDK_ROOT)/Components
 ## Include GNU Make Standard Library
 ## Website: http://gmsl.sourceforge.net/
 include $(NUCLEI_SDK_BUILD)/gmsl/gmsl
+
+# Setup APPDIRS to current directory if not defined
+# It can support multiple directories separated by space, e.g. APPDIRS = . src
+# If APPDIRS is not defined or empty, the APP_* flags will be added to global flags
+# If APPDIRS is defined, the APP_* flags will be applied only to source code in APPDIRS
+APPDIRS ?=
+
+ifneq ($(APPDIRS),)
+# Save the APP_* flags to _REAL_APP_* variables
+_REAL_APP_COMMON_FLAGS := $(APP_COMMON_FLAGS)
+_REAL_APP_CFLAGS := $(APP_CFLAGS)
+_REAL_APP_CXXFLAGS := $(APP_CXXFLAGS)
+_REAL_APP_ASMFLAGS := $(APP_ASMFLAGS)
+
+# Clear the APP_* flags to avoid them being added to global flags
+# in Build/toolchain/nuclei_gnu.mk
+APP_COMMON_FLAGS :=
+APP_CFLAGS :=
+APP_CXXFLAGS :=
+APP_ASMFLAGS :=
+endif
 
 include $(NUCLEI_SDK_BUILD)/Makefile.misc
 include $(NUCLEI_SDK_BUILD)/Makefile.conf
