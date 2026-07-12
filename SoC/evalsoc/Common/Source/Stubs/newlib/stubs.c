@@ -16,6 +16,8 @@ extern int errno;
 /* Key stub function for uart io via printf/scanf and heap management */
 #undef putchar
 
+// TODO Implement your own uart_write and uart_read for your debug uart device
+
 int putchar(int dat)
 {
     if (dat == '\n') {
@@ -153,7 +155,7 @@ __WEAK int _lseek(int file, int offset, int whence)
     return 0;
 }
 
-__WEAK int _link(char* old, char* new)
+__WEAK int _link(char* path1, char* path2)
 {
     errno = EMLINK;
     return -1;
@@ -170,7 +172,7 @@ __WEAK int _close(int fd)
     return -1;
 }
 
-__WEAK int _unlink(const char* name)
+__WEAK int _unlink(const char* path)
 {
     return -1;
 }
@@ -257,7 +259,8 @@ __WEAK int clock_gettime(clockid_t clock_id, struct timespec* tp)
 
     retval = _gettimeofday(&tv, NULL);
     if (retval == 0) {
-        TIMEVAL_TO_TIMESPEC(&tv, tp);
+        (tp)->tv_sec = (&tv)->tv_sec;
+        (tp)->tv_nsec = (&tv)->tv_usec * 1000;
     }
 
     return retval;

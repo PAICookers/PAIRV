@@ -50,11 +50,6 @@
 #define configKERNEL_INTERRUPT_PRIORITY         0
 #endif
 
-#ifndef configMAX_SYSCALL_INTERRUPT_PRIORITY
-// See function prvCheckMaxSysCallPrio and prvCalcMaxSysCallMTH
-#define configMAX_SYSCALL_INTERRUPT_PRIORITY    255
-#endif
-
 /* Constants required to check the validity of an interrupt priority. */
 #define portFIRST_USER_INTERRUPT_NUMBER ( 18 )
 
@@ -118,7 +113,7 @@ UBaseType_t uxCriticalNesting = 0xaaaaaaaa;
 UBaseType_t uxCriticalNestings[ configNUMBER_OF_CORES ] = { 0 };
 #endif /* #if ( configNUMBER_OF_CORES == 1 ) */
 
-
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
 /*
  * Record the real MTH calculated by the configMAX_SYSCALL_INTERRUPT_PRIORITY
  * The configMAX_SYSCALL_INTERRUPT_PRIORITY is not the left-aligned level value,
@@ -134,6 +129,7 @@ UBaseType_t uxCriticalNestings[ configNUMBER_OF_CORES ] = { 0 };
  * See function prvCheckMaxSysCallPrio and prvCalcMaxSysCallMTH
  */
 uint8_t uxMaxSysCallMTH = 255;
+#endif
 
 /*
  * The number of SysTick increments that make up one tick period.
@@ -164,7 +160,9 @@ static TickType_t ulStoppedTimerCompensation = 0;
  * a priority above configMAX_SYSCALL_INTERRUPT_PRIORITY.
  */
 #if( configASSERT_DEFINED == 1 )
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
 static uint8_t ucMaxSysCallPriority = 0;
+#endif
 #endif /* configASSERT_DEFINED */
 
 #if ( configNUMBER_OF_CORES > 1 )
@@ -174,44 +172,55 @@ spin_lock_t hw_sync_locks[portRTOS_SPINLOCK_COUNT] = {0, 0};
 /* Note this is a single method with uxAcquire parameter since we have
 * static vars, the method is always called with a compile time constant for
 * uxAcquire, and the compiler should do the right thing! */
-void vPortRecursiveLock(unsigned long ulLockNum, spin_lock_t *pxSpinLock, BaseType_t uxAcquire)
+void vPortRecursiveLock(BaseType_t xCoreID, unsigned long ulLockNum, spin_lock_t *pxSpinLock, BaseType_t uxAcquire)
 {
-    static uint8_t ucOwnedByCore[portMAX_CORE_COUNT];
-    static uint8_t ucRecursionCountByLock[portRTOS_SPINLOCK_COUNT];
+    /* Track, per-core, which locks this core currently owns.          */
+    static volatile uint8_t ucOwnedByCore[portMAX_CORE_COUNT];
+    /* Track, per-lock, how many times it has been recursively taken.  */
+    static volatile uint8_t ucRecursionCountByLock[portRTOS_SPINLOCK_COUNT];
 
     configASSERT(ulLockNum < portRTOS_SPINLOCK_COUNT);
-    unsigned long ulCoreNum = __get_hart_index();
-    unsigned long ulLockBit = 1u << ulLockNum;
+    unsigned long ulCoreNum = xCoreID;   /* ID of current hart  */
+    unsigned long ulLockBit = 1u << ulLockNum;      /* Bit mask for lock   */
     configASSERT(ulLockBit < 256u);
 
-    if (uxAcquire) {
+    if (uxAcquire) {    /* ACQUIRE PATH */
+        /* Case 1: lock already held by THIS core -> pure recursion.  */
         if ((!*pxSpinLock == 0)) {
             if (ucOwnedByCore[ulCoreNum] & ulLockBit) {
                 configASSERT(ucRecursionCountByLock[ulLockNum] != 255u);
                 ucRecursionCountByLock[ulLockNum]++;
                 return;
             }
-
-            while ((!*pxSpinLock == 0)) {
-            }
         }
 
+        /* Case 2: lock not held (or held by another core).           */
         do {
-            if (__AMOSWAP_W(pxSpinLock, 1) == 0) {
-                break;
+            /* Spin-wait until the lock appears free.                 */
+            while ((!*pxSpinLock == 0)) {
+                __NOP();
+            }
+            /* Atomically attempt to take the lock.                   */
+            if (__AMOSWAP_W(pxSpinLock, 1) == 0) {  /* success        */
+                __RWMB();                           /* mem-barrier    */
+                break;                              /* lock taken     */
             }
         } while (1);
 
+        /* First successful take on THIS core -> init recursion state.*/
         configASSERT(ucRecursionCountByLock[ulLockNum] == 0);
         ucRecursionCountByLock[ulLockNum] = 1;
-        ucOwnedByCore[ulCoreNum] |= ulLockBit;
-    } else {
+        ucOwnedByCore[ulCoreNum] |= ulLockBit;      /* mark ownership */
+    } else {    /* RELEASE PATH */
         configASSERT((ucOwnedByCore[ulCoreNum] & ulLockBit) != 0);
         configASSERT(ucRecursionCountByLock[ulLockNum] != 0);
 
+        /* Decrease recursion counter.                                */
         if (!--ucRecursionCountByLock[ulLockNum]) {
+            /* Last release -> clear ownership and unlock.            */
             ucOwnedByCore[ulCoreNum] &= ~ulLockBit;
-            *pxSpinLock = 0;
+            __RWMB();                  /* ensure prior stores visible */
+            *pxSpinLock = 0;           /* hand the lock back          */
         }
     }
 }
@@ -248,6 +257,8 @@ static volatile unsigned long ulSchedulerReady = 0;
  *
  * mstatus
  * #ifndef __riscv_32e
+ * rsv1
+ * rsv0
  * x31
  * x30
  * x29
@@ -284,6 +295,7 @@ StackType_t* pxPortInitialiseStack(StackType_t* pxTopOfStack, TaskFunction_t pxC
     /* Simulate the stack frame as it would be created by a context switch
     interrupt. */
 
+    /* Stack frame size 32 REGBYTES(4/8) for most cases, but for ilp32e mode, it's 14 REGBYTES(4) */
     /* Offset added to account for the way the MCU uses the stack on entry/exit
     of interrupts, and to ensure alignment. */
     pxTopOfStack--;
@@ -291,7 +303,7 @@ StackType_t* pxPortInitialiseStack(StackType_t* pxTopOfStack, TaskFunction_t pxC
 
     /* Save code space by skipping register initialisation. */
 #ifndef __riscv_32e
-    pxTopOfStack -= 22;    /* X11 - X31. */
+    pxTopOfStack -= 24;    /* X11 - X31, and 2 reserved regs space. */
 #else
     pxTopOfStack -= 6;    /* X11 - X15. */
 #endif
@@ -316,7 +328,7 @@ static void prvTaskExitError(void)
 
     Artificially force an assert() to be triggered if configASSERT() is
     defined, then stop here so application writers can catch the error. */
-    configASSERT(portGET_CRITICAL_NESTING_COUNT() == ~0UL);
+    configASSERT(portGET_CRITICAL_NESTING_COUNT( portGET_CORE_ID() ) == ~0UL);
     portDISABLE_INTERRUPTS();
     while (ulDummy == 0) {
         /* This file calls prvTaskExitError() after the scheduler has been
@@ -331,7 +343,7 @@ static void prvTaskExitError(void)
     }
 }
 /*-----------------------------------------------------------*/
-
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
 static uint8_t prvCheckMaxSysCallPrio(uint8_t max_syscall_prio)
 {
     uint8_t nlbits = __ECLIC_GetCfgNlbits();
@@ -376,12 +388,15 @@ static uint8_t prvCalcMaxSysCallMTH(uint8_t max_syscall_prio)
 
     return maxsyscallmth;
 }
+#endif
 
 /*
  * See header file for description.
  */
 BaseType_t xPortStartScheduler(void)
 {
+    BaseType_t xCoreID = ( BaseType_t ) portGET_CORE_ID();
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
     /* configMAX_SYSCALL_INTERRUPT_PRIORITY must not be set to 0. */
     configASSERT(configMAX_SYSCALL_INTERRUPT_PRIORITY);
 
@@ -396,8 +411,13 @@ BaseType_t xPortStartScheduler(void)
         FREERTOS_PORT_DEBUG("Max SysCall Priority is set to %d\n", ucMaxSysCallPriority);
     }
 #endif /* conifgASSERT_DEFINED */
+#endif
 
     __disable_irq();
+
+    /* Start the timer that generates the tick ISR.  Interrupts are disabled
+    here already. */
+    vPortSetupTimerInterrupt();
 
 #if ( configNUMBER_OF_CORES > 1 )
     if (__get_hart_index() == BOOT_HARTID) {
@@ -408,15 +428,20 @@ BaseType_t xPortStartScheduler(void)
     }
 #endif
 
-    /* Start the timer that generates the tick ISR.  Interrupts are disabled
-    here already. */
-    vPortSetupTimerInterrupt();
-
     /* Initialise the critical nesting count ready for the first task. */
-    portSET_CRITICAL_NESTING_COUNT(0);
+    portSET_CRITICAL_NESTING_COUNT( xCoreID, 0 );
 
+    __RWMB();
+
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
     /* Initialise base priority to zero. */
     vPortSetBASEPRI(0);
+#endif
+
+    // Enable interrupt and task sp swap
+#if defined(ECLIC_HW_CTX_AUTO) && defined(CFG_HAS_ECLICV2)
+    __RV_CSR_SET(CSR_MECLIC_CTL, MECLIC_CTL_TSP_EN);
+#endif
 
     /* Start the first task. */
     prvPortStartFirstTask();
@@ -428,7 +453,7 @@ BaseType_t xPortStartScheduler(void)
     vTaskSwitchContext() so link time optimisation does not remove the
     symbol. */
 #if ( configNUMBER_OF_CORES > 1 )
-    vTaskSwitchContext( portGET_CORE_ID() );
+    vTaskSwitchContext( xCoreID );
 #else
     vTaskSwitchContext();
 #endif
@@ -443,31 +468,35 @@ void vPortEndScheduler(void)
 {
     /* Not implemented in ports where there is nothing to return to.
     Artificially force an assert. */
-    configASSERT(portGET_CRITICAL_NESTING_COUNT() == 1000UL);
+    configASSERT(portGET_CRITICAL_NESTING_COUNT( portGET_CORE_ID() ) == 1000UL);
 }
 /*-----------------------------------------------------------*/
 
 void vPortEnterCritical(void)
 {
+    BaseType_t xCoreID = ( BaseType_t ) portGET_CORE_ID();
     portDISABLE_INTERRUPTS();
-    portINCREMENT_CRITICAL_NESTING_COUNT();
+    portINCREMENT_CRITICAL_NESTING_COUNT( xCoreID );
 
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
     /* This is not the interrupt safe version of the enter critical function so
     assert() if it is being called from an interrupt context.  Only API
     functions that end in "FromISR" can be used in an interrupt.  Only assert if
     the critical nesting count is 1 to protect against recursive calls if the
     assert function also uses a critical section. */
-    if (portGET_CRITICAL_NESTING_COUNT() == 1) {
+    if (portGET_CRITICAL_NESTING_COUNT( xCoreID ) == 1) {
         configASSERT((__ECLIC_GetMth() & portMTH_MASK) == uxMaxSysCallMTH);
     }
+#endif
 }
 /*-----------------------------------------------------------*/
 
 void vPortExitCritical(void)
 {
-    configASSERT(portGET_CRITICAL_NESTING_COUNT());
-    portDECREMENT_CRITICAL_NESTING_COUNT();
-    if (portGET_CRITICAL_NESTING_COUNT() == 0) {
+    BaseType_t xCoreID = ( BaseType_t ) portGET_CORE_ID();
+    configASSERT(portGET_CRITICAL_NESTING_COUNT( xCoreID ));
+    portDECREMENT_CRITICAL_NESTING_COUNT( xCoreID );
+    if (portGET_CRITICAL_NESTING_COUNT( xCoreID ) == 0) {
         portENABLE_INTERRUPTS();
     }
 }
@@ -495,7 +524,6 @@ void vPortAssert(int32_t x)
 
 void xPortTaskSwitch(void)
 {
-    portDISABLE_INTERRUPTS();
     /* Clear Software IRQ, A MUST */
     SysTimer_ClearSWIRQ();
 #if ( configNUMBER_OF_CORES > 1 )
@@ -503,7 +531,6 @@ void xPortTaskSwitch(void)
 #else
     vTaskSwitchContext();
 #endif
-    portENABLE_INTERRUPTS();
 }
 /*-----------------------------------------------------------*/
 
@@ -559,6 +586,10 @@ __attribute__((weak)) void vPortSuppressTicksAndSleep(TickType_t xExpectedIdleTi
         xExpectedIdleTime = xMaximumPossibleSuppressedTicks;
     }
 
+    /* Enter a critical section but don't use the taskENTER_CRITICAL()
+    method as that will mask interrupts that should exit sleep mode. */
+    __disable_irq();
+
     /* Stop the SysTick momentarily.  The time the SysTick is stopped for
     is accounted for as best it can be, but using the tickless mode will
     inevitably result in some tiny drift of the time maintained by the
@@ -572,10 +603,6 @@ __attribute__((weak)) void vPortSuppressTicksAndSleep(TickType_t xExpectedIdleTi
     if (ulReloadValue > ulStoppedTimerCompensation) {
         ulReloadValue -= ulStoppedTimerCompensation;
     }
-
-    /* Enter a critical section but don't use the taskENTER_CRITICAL()
-    method as that will mask interrupts that should exit sleep mode. */
-    __disable_irq();
 
     /* If a context switch is pending or a task is waiting for the scheduler
     to be unsuspended then abandon the low power entry. */
@@ -624,7 +651,6 @@ __attribute__((weak)) void vPortSuppressTicksAndSleep(TickType_t xExpectedIdleTi
 
         /* Make sure interrupt enable is executed */
         __RWMB();
-        __FENCE_I();
         __NOP();
 
         /* Disable interrupts again because the clock is about to be stopped
@@ -655,7 +681,11 @@ __attribute__((weak)) void vPortSuppressTicksAndSleep(TickType_t xExpectedIdleTi
             periods (not the ulReload value which accounted for part
             ticks). */
             xModifiableIdleTime = SysTimer_GetLoadValue();
-            if (xModifiableIdleTime > XLastLoadValue) {
+            /* Use >= to handle the case where WFI wakes up but MTIME has not
+               yet incremented (xModifiableIdleTime == XLastLoadValue), in which
+               case elapsed time is 0 instead of wrapping around via the else
+               branch which would produce a bogus large tick count. */
+            if (xModifiableIdleTime >= XLastLoadValue) {
                 ulCompletedSysTickDecrements = (xModifiableIdleTime - XLastLoadValue);
             } else {
                 ulCompletedSysTickDecrements = (xModifiableIdleTime + portMAX_BIT_NUMBER - XLastLoadValue);
@@ -738,6 +768,7 @@ __attribute__((weak)) void vPortSetupTimerInterrupt(void)
 
 void vPortValidateInterruptPriority(void)
 {
+#if configMAX_SYSCALL_INTERRUPT_PRIORITY < 255
     uint32_t ulCurrentInterrupt;
     uint8_t ucCurrentPriority;
 
@@ -777,6 +808,7 @@ void vPortValidateInterruptPriority(void)
             configASSERT(ucCurrentPriority <= ucMaxSysCallPriority);
         }
     }
+#endif
 }
 
 #endif /* configASSERT_DEFINED */

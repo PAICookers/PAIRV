@@ -64,6 +64,7 @@ volatile rt_ubase_t  rt_interrupt_to_thread   = 0;
 volatile rt_ubase_t rt_thread_switch_interrupt_flag = 0;
 void SysTick_Handler(void);
 
+/* Stack frame size 32 REGBYTES(4/8) for most cases, but for ilp32e mode, it's 14 REGBYTES(4) */
 struct rt_hw_stack_frame {
     rt_ubase_t epc;        /* epc - epc    - program counter                     */
     rt_ubase_t ra;         /* x1  - ra     - return address for jumps            */
@@ -95,6 +96,8 @@ struct rt_hw_stack_frame {
     rt_ubase_t t4;         /* x29 - t4     - temporary register 4                */
     rt_ubase_t t5;         /* x30 - t5     - temporary register 5                */
     rt_ubase_t t6;         /* x31 - t6     - temporary register 6                */
+    rt_ubase_t rsv0;       /* reserved 0   - reserved to make space              */
+    rt_ubase_t rsv1;       /* reserved 1   - reserved to make space              */
 #endif
     rt_ubase_t xstatus;    /*              - m/s status register             */
 };
@@ -119,7 +122,13 @@ rt_uint8_t* rt_hw_stack_init(void*       tentry,
     int                i;
 
     stk  = stack_addr + sizeof(rt_ubase_t);
-    stk  = (rt_uint8_t*)RT_ALIGN_DOWN((rt_ubase_t)stk, REGBYTES);
+    /* https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc */
+    /* 32-bit boundary for ilp32e, and 128-bit boundary for others */
+#ifndef __riscv_32e
+    stk  = (rt_uint8_t*)RT_ALIGN_DOWN((rt_ubase_t)stk, 16);
+#else
+    stk  = (rt_uint8_t*)RT_ALIGN_DOWN((rt_ubase_t)stk, 4);
+#endif
     stk -= sizeof(struct rt_hw_stack_frame);
 
     frame = (struct rt_hw_stack_frame*)stk;
@@ -196,7 +205,7 @@ void vPortSetupTimerInterrupt(void)
 {
 #ifdef SMODE_RTOS
 
-#if defined(__TEE_PRESENT) && __TEE_PRESENT == 1
+#if defined(__SMODE_PRESENT) && __SMODE_PRESENT == 1
     SMODE_TICK_CONFIG();
     ECLIC_DisableIRQ_S(SMODE_TIMER_IRQ);
     ECLIC_SetLevelIRQ_S(SMODE_TIMER_IRQ, configKERNEL_INTERRUPT_PRIORITY);
@@ -210,7 +219,7 @@ void vPortSetupTimerInterrupt(void)
     ECLIC_SetVector_S(SMODE_SWI_IRQ, (rv_csr_t)eclic_ssip_handler);
     ECLIC_EnableIRQ_S(SMODE_SWI_IRQ);
 #else
-    #error "TEE feature is required for RT-Thread S-Mode support"
+    #error "S-Mode feature is required for RT-Thread S-Mode support"
 #endif
 
 #else
@@ -248,6 +257,16 @@ RT_WEAK void* rt_heap_end_get(void)
 }
 #endif
 
+// NOTE: define top of stack, it will be used as non-vector interrupt/exception stack when OS started
+#ifndef __ICCRISCV__
+// _sp is defined in linker script such as gcc_evalsoc_ilm.ld
+extern char _sp[];
+#define __RTT_INT_STACK  (_sp)
+#else
+// CSTACK$$Limit is defined in iar linker script such iar_evalsoc_ilm.icf
+extern char CSTACK$$Limit[];
+#define __RTT_INT_STACK  (CSTACK$$Limit)
+#endif
 /**
  * This function will initial your board.
  */
@@ -266,6 +285,14 @@ void rt_hw_board_init()
 #endif
 
     rt_hw_interrupt_disable();
+
+    // Enable interrupt and task sp swap
+#if defined(ECLIC_HW_CTX_AUTO) && defined(CFG_HAS_ECLICV2)
+    // NOTE: setup interrupt stack pointer for CSR_MTSP or CSR_STSP depends on which mode RTT run on
+    __RV_CSR_WRITE(CSR_XTSP, (unsigned long)__RTT_INT_STACK);
+    // NOTE: enable trap sp auto swap
+    __RV_CSR_SET(CSR_XECLIC_CTL, XECLIC_CTL_TSP_EN);
+#endif
 }
 
 /* This is the timer interrupt service routine. */
@@ -308,10 +335,13 @@ char rt_hw_console_getchar(void)
 
 rt_base_t rt_hw_interrupt_disable(void)
 {
-    return __RV_CSR_READ_CLEAR(CSR_XSTATUS, XSTATUS_XIE);
+    rt_base_t level = __RV_CSR_READ_CLEAR(CSR_XSTATUS, XSTATUS_XIE);
+    __RWMB();
+    return level;
 }
 
 void rt_hw_interrupt_enable(rt_base_t level)
 {
     __RV_CSR_WRITE(CSR_XSTATUS, level);
+    __RWMB();
 }

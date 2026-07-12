@@ -3,10 +3,13 @@ RTOS = RTThread
 
 NUCLEI_SDK_ROOT = ../../..
 
+# REQUIRE: ECLIC, SYSTIMER
+XLCFG_SYSTIMER :=
+XLCFG_ECLIC :=
+
 COMMON_FLAGS = -O3
 
 SRCDIRS = .
 INCDIRS = .
-RTTHREAD_MSH := 1
 
 include $(NUCLEI_SDK_ROOT)/Build/Makefile.base

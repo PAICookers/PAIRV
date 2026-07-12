@@ -1,5 +1,10 @@
-#ifndef __CPUFEATURE__
-#define __CPUFEATURE__
+#ifndef __CPUFEATURE_H__
+#define __CPUFEATURE_H__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CPU_ISA "rv32imac_zicsr_zicntr_zifencei_zicond_xxlnice"
 #define CFG_CPU_NAME "n307"
 #define CFG_CPU_VERSION "v4.11.0"
@@ -129,4 +134,9 @@
 #define CFG_HAS_NICE_CORE_DECODE
 #define CFG_PPI_BASE_ADDR 0x10000000
 #define CFG_HAS_ILM
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

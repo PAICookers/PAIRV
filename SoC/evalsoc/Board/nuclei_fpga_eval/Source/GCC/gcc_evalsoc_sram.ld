@@ -29,9 +29,7 @@ INCLUDE evalsoc.memory
 
 MEMORY
 {
-  /* For evalsoc using 200/300 core, it has a 256K sram started from 0xA0000000 */
-  /* For evalsoc using 600/900 core, it has a DDR ram started from 0xA0000000 */
-  /* The sram ld script file use just 256K to make it works on all types of core */
+  /* SRAM/SYSMEM address and size are provided by evalsoc.memory. */
   rom (rxa!w) : ORIGIN = SRAM_MEMORY_BASE,                           LENGTH = SRAM_MEMORY_ROM_SIZE
   ram (wxa!r) : ORIGIN = SRAM_MEMORY_BASE + SRAM_MEMORY_ROM_SIZE,    LENGTH = SRAM_MEMORY_SIZE - SRAM_MEMORY_ROM_SIZE
 }
@@ -43,7 +41,9 @@ REGION_ALIAS("DATA_LMA", ram)
 SECTIONS
 {
   /* To provide symbol __STACK_SIZE, __HEAP_SIZE and __SMP_CPU_CNT */
+  /* __STACK_SIZE is the reserved stack size for each hart. */
   PROVIDE(__STACK_SIZE = 2K);
+  /* __HEAP_SIZE is the minimum heap space reserved in linker layout. */
   PROVIDE(__HEAP_SIZE = 2K);
   PROVIDE(__SMP_CPU_CNT = 1);
   __TOT_STACK_SIZE = __STACK_SIZE * __SMP_CPU_CNT;
@@ -61,9 +61,6 @@ SECTIONS
   {
     *(.text.unlikely .text.unlikely.*)
     *(.text.startup .text.startup.*)
-    . = ALIGN(8);
-    PROVIDE( __jvt_base$ = . );
-    *(.text.tbljal .text.tbljal.*)
     *(.text .text.*)
     *(.gnu.linkonce.t.*)
     /* .fini */
@@ -89,11 +86,13 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
     /* .ctors */
     . = ALIGN(8);
+    PROVIDE(__ctors_start__ = .);
     KEEP (*crtbegin.o(.ctors))
     KEEP (*crtbegin?.o(.ctors))
     KEEP (*(EXCLUDE_FILE (*crtend.o *crtend?.o ) .ctors))
     KEEP (*(SORT(.ctors.*)))
     KEEP (*(.ctors))
+    PROVIDE(__ctors_end__ = .);
     /* .dtors */
     . = ALIGN(8);
     KEEP (*crtbegin.o(.dtors))
@@ -101,6 +100,13 @@ SECTIONS
     KEEP (*(EXCLUDE_FILE (*crtend.o *crtend?.o ) .dtors))
     KEEP (*(SORT(.dtors.*)))
     KEEP (*(.dtors))
+  } >ROM AT>ROM
+
+  .riscv.jvt  :
+  {
+    /* https://github.com/riscv-non-isa/riscv-elf-psabi-doc/pull/349 */
+    PROVIDE( __jvt_base$ = ALIGN(64) );
+    *(.riscv.jvt .riscv.jvt.*)
   } >ROM AT>ROM
 
   PROVIDE( _ilm_lma = LOADADDR(.text) );
@@ -131,7 +137,6 @@ SECTIONS
     *(.rdata)
     *(.rodata .rodata.*)
     *(.gnu.linkonce.r.*)
-    /* below sections are used for rt-thread */
     /* Fix undefined symbol: __eh_frame_start/__eh_frame_hdr_start/__eh_frame_end/__eh_frame_hdr_end */
     PROVIDE_HIDDEN (__eh_frame_hdr_start = .);
     *(.eh_frame_hdr)
@@ -139,6 +144,8 @@ SECTIONS
     PROVIDE_HIDDEN (__eh_frame_start = .);
     *(.eh_frame)
     PROVIDE_HIDDEN (__eh_frame_end = .);
+    *(.gcc_except_table .gcc_except_table.*)
+    /* below sections are used for rt-thread */
     . = ALIGN(8);
     __rt_init_start = .;
     KEEP(*(SORT(.rti_fn*)))
@@ -151,6 +158,11 @@ SECTIONS
     __vsymtab_start = .;
     KEEP(*(VSymTab))
     __vsymtab_end = .;
+    . = ALIGN(8);
+    /* section information for utest */
+    __rt_utest_tc_tab_start = .;
+    KEEP(*(UtestTcTab))
+    __rt_utest_tc_tab_end = .;
     . = ALIGN(8);
   } >RAM AT>DATA_LMA
 
@@ -197,11 +209,18 @@ SECTIONS
    * 1. heap need to be align at 16 bytes
    * 2. __heap_start and __heap_end symbol need to be defined
    * 3. reserved at least __HEAP_SIZE space for heap
+   *
+   * Note:
+   * - __HEAP_SIZE defines the minimum reserved heap size in linker layout
+   * - the C runtime heap implementation uses the range [__heap_start, __heap_end)
+   * - therefore actual heap available at runtime can be larger than __HEAP_SIZE
+   *   when there is extra free RAM between .bss/.heap and the stack region
    */
   .heap (NOLOAD)   : ALIGN(16)
   {
     . = ALIGN(16);
     PROVIDE( __heap_start = . );
+    /* Reserve at least __HEAP_SIZE bytes for heap from low address upward. */
     . += __HEAP_SIZE;
     . = ALIGN(16);
     PROVIDE( __heap_limit = . );
@@ -210,13 +229,19 @@ SECTIONS
   .stack ORIGIN(RAM) + LENGTH(RAM) - __TOT_STACK_SIZE (NOLOAD) :
   {
     . = ALIGN(16);
+    /* Heap can grow up to the start of the reserved stack area. */
     PROVIDE( _heap_end = . );
     PROVIDE( __heap_end = . );
+    PROVIDE( __stack_start__ = . );
     PROVIDE( __StackLimit = . );
     PROVIDE( __StackBottom = . );
+    /* Reserve per-hart stack slots at the top of RAM. In SMP, overflow may
+     * corrupt a neighboring hart stack.
+     */
     . += __TOT_STACK_SIZE;
     . = ALIGN(16);
     PROVIDE( __StackTop = . );
     PROVIDE( _sp = . );
+    PROVIDE( __rt_rvstack = . );
   } >RAM AT>RAM
 }

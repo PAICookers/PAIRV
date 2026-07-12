@@ -30,6 +30,11 @@ typedef struct uart_app {
 
 static uart_app_t g_uart_app;
 
+static void buffer_uart_byte(uint8_t byte, void *ctx)
+{
+    (void)rv_ringbuf_put((rv_ringbuf_t *)ctx, byte);
+}
+
 static void uart_app_print_binary_64(uint32_t high, uint32_t low)
 {
     for (int i = 31; i >= 0; --i) {
@@ -103,8 +108,8 @@ void UART0_IRQHandler(void)
 
     /* Drain every buffered UART RX byte into the app ring buffer so the shell
      * logic in the main loop can parse complete commands later. */
-    if (uart_rx_irq_pending(UART0)) {
-        (void)uart_drain_rx_fifo(UART0, rv_ringbuf_put_byte_cb,
+    if ((uart_get_status(UART0) & UART_IP_RXWM) != 0) {
+        (void)uart_drain_rx_fifo(UART0, buffer_uart_byte,
                                  &g_uart_app.rx_buf);
     }
 

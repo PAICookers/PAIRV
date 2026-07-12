@@ -9,9 +9,10 @@
  */
 
 #include "riscv_encoding.h"
+#include "cpufeature.h"
 
 #ifndef __riscv_32e
-#define portRegNum          30
+#define portRegNum          32
 #else
 #define portRegNum          14
 #endif

@@ -1,6 +1,6 @@
 TARGET := dhrystone
 
-NUCLEI_SDK_ROOT = ../../..
+NUCLEI_SDK_ROOT = ../../../..
 
 TOOLCHAIN ?= nuclei_gnu
 # supported mode
@@ -9,7 +9,9 @@ TOOLCHAIN ?= nuclei_gnu
 DHRY_MODE ?= ground
 
 # Adjust CPU_SERIES according to passed CORE
-ifneq ($(findstring 20,$(CORE)),)
+ifneq ($(findstring n100,$(CORE)),)
+CPU_SERIES ?= 100
+else ifneq ($(findstring 20,$(CORE)),)
 CPU_SERIES ?= 200
 else ifneq ($(findstring 30,$(CORE)),)
 CPU_SERIES ?= 300
