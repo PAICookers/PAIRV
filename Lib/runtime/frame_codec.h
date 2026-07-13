@@ -30,14 +30,36 @@ typedef struct rvrt_frame_s {
 
 #define RVRT_FRAME_TYPE_OFFSET 30U
 #define RVRT_FRAME_TYPE_WORK 2U
+#define RVRT_FRAME_WORK_KIND_OFFSET 29U
+#define RVRT_FRAME_WORK_KIND_DATA 0U
+#define RVRT_FRAME_WORK_KIND_VOLTAGE 1U
 #define RVRT_FRAME_KIND_OFFSET 28U
 #define RVRT_FRAME_KIND_COMPLETE 0xEU
+
+#define RVRT_OUTPUT_DATA 0U
+#define RVRT_OUTPUT_VOLTAGE 1U
 
 /** @brief Return true when frame has the PAICORE work-frame type tag. */
 static inline bool rvrt_frame_is_work(const rvrt_frame_t *frame)
 {
     return (frame != NULL) && (((frame->high >> RVRT_FRAME_TYPE_OFFSET) &
                                 0x3U) == RVRT_FRAME_TYPE_WORK);
+}
+
+/** @brief Return true when frame is a work-frame type 1 DATA frame. */
+static inline bool rvrt_frame_is_work_type1(const rvrt_frame_t *frame)
+{
+    return rvrt_frame_is_work(frame) &&
+           (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 0x1U) ==
+            RVRT_FRAME_WORK_KIND_DATA);
+}
+
+/** @brief Return true when frame is a work-frame type 2 membrane-voltage frame. */
+static inline bool rvrt_frame_is_work_type2(const rvrt_frame_t *frame)
+{
+    return rvrt_frame_is_work(frame) &&
+           (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 0x1U) ==
+            RVRT_FRAME_WORK_KIND_VOLTAGE);
 }
 
 /** @brief Return true when frame marks completion of the current PAICORE pass.
@@ -113,6 +135,31 @@ rvrt_status_t
 rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
                          const rvrt_frame_t *frame, uint8_t *output,
                          uint32_t output_size, bool *written);
+
+typedef struct rvrt_membrane_decode_state_s {
+    uint32_t value;
+    uint8_t parts_received;
+} rvrt_membrane_decode_state_t;
+
+/**
+ * @brief Decode one work-frame type 2 membrane-voltage data part.
+ *
+ * One membrane voltage is delivered as four 8-bit parts in LSB-to-MSB order.
+ * This function keeps per-output-element accumulation in state, so frame parts
+ * from different neurons may be interleaved as long as each neuron is locally
+ * ordered. written becomes true only when a full int32 value is completed.
+ * @param view Borrowed output mapping used to identify the frame address.
+ * @param frame Received logical high/low frame words.
+ * @param output Contiguous int32 membrane output buffer.
+ * @param output_size Number of int32 elements in output.
+ * @param state Per-output-element accumulation state.
+ * @param state_size Number of entries in state.
+ * @param written Receives whether output was modified.
+ */
+rvrt_status_t rvrt_decode_membrane_frame(
+    const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
+    int32_t *output, uint32_t output_size,
+    rvrt_membrane_decode_state_t *state, uint32_t state_size, bool *written);
 
 const char *rvrt_status_string(rvrt_status_t status);
 

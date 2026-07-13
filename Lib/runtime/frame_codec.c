@@ -41,7 +41,9 @@
 #define RVRT_OW1_DATA_BITS 8U
 #define RVRT_OW1_DATA_MASK 0xFFU
 
-#define RVRT_OUTPUT_DATA 0U
+#define RVRT_MEMBRANE_DATA_BITS 32U
+#define RVRT_MEMBRANE_PART_BITS 8U
+#define RVRT_MEMBRANE_PART_COUNT 4U
 
 #define RVRT_DTYPE_UINT1 1U
 #define RVRT_DTYPE_INT1 2U
@@ -255,6 +257,46 @@ static uint8_t decode_payload(uint32_t payload, uint32_t bits, bool is_signed)
     return (uint8_t)value;
 }
 
+static rvrt_status_t find_output_entry_for_work_frame(
+    const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
+    rvrt_artifact_output_entry_t *entry, bool *found)
+{
+    if ((view == NULL) || (view->entries == NULL) || (frame == NULL) ||
+        (entry == NULL) || (found == NULL)) {
+        return RVRT_STATUS_NULL_ARGUMENT;
+    }
+
+    *found = false;
+    if (view->target_lcn > RVRT_OW1_TARGET_LCN_MAX) {
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output target_lcn=%u",
+                      (unsigned)view->target_lcn);
+        return RVRT_STATUS_UNSUPPORTED;
+    }
+
+    const uint64_t raw_frame = frame_to_u64(frame);
+    const uint32_t frame_timestep =
+        (uint32_t)((((raw_frame >> RVRT_OW1_TS_HI_OFFSET) & RVRT_OW1_TS_HI_MASK)
+                    << RVRT_OW1_TS_LO_BITS) |
+                   ((raw_frame >> RVRT_OW1_TS_LO_OFFSET) &
+                    RVRT_OW1_TS_LO_MASK));
+    const uint32_t runtime_timestep = frame_timestep >> view->target_lcn;
+    if (runtime_timestep != 0U) {
+        return RVRT_STATUS_OK;
+    }
+
+    const uint32_t frame_axon =
+        (uint32_t)((raw_frame >> RVRT_OW1_AXON_OFFSET) & RVRT_OW1_AXON_MASK);
+    const uint32_t ax_width = RVRT_OW1_AXON_BITS + view->target_lcn;
+    const uint32_t axon_bit_idx =
+        (((frame_timestep & RVRT_OW1_TS_MASK) << RVRT_OW1_AXON_BITS) |
+         frame_axon) &
+        ((1U << ax_width) - 1U);
+
+    const rvrt_artifact_status_t artifact_status =
+        rvrt_artifact_output_mapping_find(view, axon_bit_idx, entry, found);
+    return runtime_status_from_artifact(artifact_status);
+}
+
 /** @brief Encode one nonzero input entry as an offline work-type-1 frame. */
 static rvrt_status_t build_work1_frame(const rvrt_artifact_input_entry_t *entry,
                                        uint32_t timestep, uint8_t payload,
@@ -410,7 +452,7 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
     }
 
     *written = false;
-    if ((frame->high >> RVRT_FRAME_TYPE_OFFSET) != RVRT_FRAME_TYPE_WORK) {
+    if (!rvrt_frame_is_work_type1(frame)) {
         return RVRT_STATUS_OK;
     }
 
@@ -426,36 +468,10 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
         return RVRT_STATUS_UNSUPPORTED;
     }
 
-    if (view->target_lcn > RVRT_OW1_TARGET_LCN_MAX) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output target_lcn=%u",
-                      (unsigned)view->target_lcn);
-        return RVRT_STATUS_UNSUPPORTED;
-    }
-
-    const uint64_t raw_frame = frame_to_u64(frame);
-    const uint32_t frame_timestep =
-        (uint32_t)((((raw_frame >> RVRT_OW1_TS_HI_OFFSET) & RVRT_OW1_TS_HI_MASK)
-                    << RVRT_OW1_TS_LO_BITS) |
-                   ((raw_frame >> RVRT_OW1_TS_LO_OFFSET) &
-                    RVRT_OW1_TS_LO_MASK));
-    const uint32_t runtime_timestep = frame_timestep >> view->target_lcn;
-    if (runtime_timestep != 0U) {
-        return RVRT_STATUS_OK;
-    }
-
-    const uint32_t frame_axon =
-        (uint32_t)((raw_frame >> RVRT_OW1_AXON_OFFSET) & RVRT_OW1_AXON_MASK);
-    const uint32_t ax_width = RVRT_OW1_AXON_BITS + view->target_lcn;
-    const uint32_t axon_bit_idx =
-        (((frame_timestep & RVRT_OW1_TS_MASK) << RVRT_OW1_AXON_BITS) |
-         frame_axon) &
-        ((1U << ax_width) - 1U);
-
     rvrt_artifact_output_entry_t entry = {0};
     bool found = false;
-    const rvrt_artifact_status_t artifact_status =
-        rvrt_artifact_output_mapping_find(view, axon_bit_idx, &entry, &found);
-    rvrt_status_t status = runtime_status_from_artifact(artifact_status);
+    rvrt_status_t status =
+        find_output_entry_for_work_frame(view, frame, &entry, &found);
     if (status != RVRT_STATUS_OK) {
         return status;
     }
@@ -483,6 +499,66 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
 
     output[entry.elem_idx] = decode_payload(payload, entry_bits, is_signed);
     *written = true;
+    return RVRT_STATUS_OK;
+}
+
+rvrt_status_t rvrt_decode_membrane_frame(
+    const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
+    int32_t *output, uint32_t output_size,
+    rvrt_membrane_decode_state_t *state, uint32_t state_size, bool *written)
+{
+    if ((view == NULL) || (view->entries == NULL) || (frame == NULL) ||
+        (output == NULL) || (state == NULL) || (written == NULL)) {
+        return RVRT_STATUS_NULL_ARGUMENT;
+    }
+
+    *written = false;
+    if (!rvrt_frame_is_work_type2(frame)) {
+        return RVRT_STATUS_OK;
+    }
+
+    if (view->kind != RVRT_OUTPUT_VOLTAGE) {
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported membrane output kind=%u",
+                      (unsigned)view->kind);
+        return RVRT_STATUS_UNSUPPORTED;
+    }
+    if (view->bit_width != RVRT_MEMBRANE_DATA_BITS) {
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
+                      "unsupported membrane output bit_width=%u",
+                      (unsigned)view->bit_width);
+        return RVRT_STATUS_UNSUPPORTED;
+    }
+
+    rvrt_artifact_output_entry_t entry = {0};
+    bool found = false;
+    rvrt_status_t status =
+        find_output_entry_for_work_frame(view, frame, &entry, &found);
+    if (status != RVRT_STATUS_OK) {
+        return status;
+    }
+    if (!found) {
+        return RVRT_STATUS_OK;
+    }
+    if ((entry.elem_idx >= output_size) || (entry.elem_idx >= state_size)) {
+        return RVRT_STATUS_OUT_OF_RANGE;
+    }
+
+    rvrt_membrane_decode_state_t *const slot = &state[entry.elem_idx];
+    if (slot->parts_received >= RVRT_MEMBRANE_PART_COUNT) {
+        return RVRT_STATUS_BAD_VALUE;
+    }
+
+    const uint32_t payload = frame->low & RVRT_OW1_DATA_MASK;
+    slot->value |= payload << (slot->parts_received * RVRT_MEMBRANE_PART_BITS);
+    slot->parts_received++;
+
+    if (slot->parts_received == RVRT_MEMBRANE_PART_COUNT) {
+        output[entry.elem_idx] = (int32_t)slot->value;
+        slot->value = 0U;
+        slot->parts_received = 0U;
+        *written = true;
+    }
+
     return RVRT_STATUS_OK;
 }
 

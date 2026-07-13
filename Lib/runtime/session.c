@@ -40,6 +40,33 @@ static uint32_t required_rx_capacity(uint32_t output_frames)
     return output_frames + RVRT_SESSION_COMPLETE_FRAME_COUNT;
 }
 
+static bool expected_output_frame_count(
+    const rvrt_artifact_output_mapping_view_t *view, uint32_t *frame_count)
+{
+    if ((view == NULL) || (frame_count == NULL)) {
+        return false;
+    }
+
+    uint32_t frames_per_entry = 1U;
+    if (view->kind == RVRT_OUTPUT_VOLTAGE) {
+        if ((view->bit_width == 0U) || ((view->bit_width % 8U) != 0U)) {
+            return false;
+        }
+        frames_per_entry = view->bit_width / 8U;
+    }
+
+    if (view->entry_count > (UINT32_MAX / frames_per_entry)) {
+        return false;
+    }
+    *frame_count = view->entry_count * frames_per_entry;
+    return true;
+}
+
+static bool is_int32_aligned(const void *data)
+{
+    return (((uintptr_t)data) % sizeof(int32_t)) == 0U;
+}
+
 static rv_counter_t timeout_cycles(uint32_t timeout_ms)
 {
     return ((rv_counter_t)(SystemCoreClock / 1000U)) * timeout_ms;
@@ -345,10 +372,21 @@ rvrt_session_status_t rvrt_session_load_config(const rvrt_artifact_t *artifact)
     return RVRT_SESSION_STATUS_OK;
 }
 
+static void record_decoded_write(rvrt_session_t *session, bool written)
+{
+    if (written) {
+#if RVRT_SESSION_ENABLE_STATS
+        session->stats.decoded_writes++;
+#else
+        (void)session;
+#endif
+    }
+}
+
 static rvrt_session_status_t
-decode_phase(rvrt_session_t *session,
-             const rvrt_artifact_output_mapping_view_t *view, uint8_t *output,
-             uint32_t output_size)
+decode_data_phase(rvrt_session_t *session,
+                  const rvrt_artifact_output_mapping_view_t *view,
+                  uint8_t *output, uint32_t output_size)
 {
     const uint32_t rx_count = session->phase.rx_count;
 
@@ -359,13 +397,57 @@ decode_phase(rvrt_session_t *session,
         if (__RARELY(status != RVRT_STATUS_OK)) {
             return RVRT_SESSION_STATUS_RUNTIME_ERROR;
         }
-        if (written) {
-#if RVRT_SESSION_ENABLE_STATS
-            session->stats.decoded_writes++;
-#endif
-        }
+        record_decoded_write(session, written);
     }
     return RVRT_SESSION_STATUS_OK;
+}
+
+static rvrt_session_status_t
+decode_membrane_phase(rvrt_session_t *session,
+                      const rvrt_artifact_output_mapping_view_t *view,
+                      uint8_t *output, uint32_t output_size)
+{
+    if (__RARELY(((output_size % sizeof(int32_t)) != 0U) ||
+                 !is_int32_aligned(output))) {
+        return RVRT_SESSION_STATUS_RUNTIME_ERROR;
+    }
+
+    const uint32_t output_count = output_size / (uint32_t)sizeof(int32_t);
+    if (__RARELY((session->membrane_state == NULL) ||
+                 (session->membrane_state_capacity < output_count))) {
+        return RVRT_SESSION_STATUS_BUFFER_TOO_SMALL;
+    }
+
+    memset(session->membrane_state, 0,
+           output_count * sizeof(session->membrane_state[0]));
+    int32_t *const membrane_output = (int32_t *)(void *)output;
+    const uint32_t rx_count = session->phase.rx_count;
+
+    for (uint32_t i = 0U; i < rx_count; ++i) {
+        bool written = false;
+        const rvrt_status_t status = rvrt_decode_membrane_frame(
+            view, &session->rx_frames[i], membrane_output, output_count,
+            session->membrane_state, output_count, &written);
+        if (__RARELY(status != RVRT_STATUS_OK)) {
+            return RVRT_SESSION_STATUS_RUNTIME_ERROR;
+        }
+        record_decoded_write(session, written);
+    }
+    return RVRT_SESSION_STATUS_OK;
+}
+
+static rvrt_session_status_t
+decode_phase(rvrt_session_t *session,
+             const rvrt_artifact_output_mapping_view_t *view, uint8_t *output,
+             uint32_t output_size)
+{
+    if (view->kind == RVRT_OUTPUT_DATA) {
+        return decode_data_phase(session, view, output, output_size);
+    }
+    if (view->kind == RVRT_OUTPUT_VOLTAGE) {
+        return decode_membrane_phase(session, view, output, output_size);
+    }
+    return RVRT_SESSION_STATUS_RUNTIME_ERROR;
 }
 
 /**
@@ -382,8 +464,11 @@ static rvrt_session_status_t run_paicore_pass(
     uint32_t input_size, uint8_t *decode_output, uint32_t decode_output_size,
     rvrt_frame_t *workspace, uint32_t workspace_capacity, uint32_t timeout_ms)
 {
-    if (__RARELY(session->rx_capacity <
-                 required_rx_capacity(output_view->entry_count))) {
+    uint32_t output_frame_count = 0U;
+    if (__RARELY(!expected_output_frame_count(output_view, &output_frame_count))) {
+        return RVRT_SESSION_STATUS_RUNTIME_ERROR;
+    }
+    if (__RARELY(session->rx_capacity < required_rx_capacity(output_frame_count))) {
         return RVRT_SESSION_STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -572,6 +657,8 @@ rvrt_session_status_t rvrt_session_init(rvrt_session_t *session,
     session->input_bytes = capacity.input_bytes;
     session->output_ref = output_ref;
     session->output_bytes = capacity.final_output_bytes;
+    session->membrane_state = config->membrane_state;
+    session->membrane_state_capacity = config->membrane_state_capacity;
 #if RVRT_SESSION_ENABLE_STATS
     clear_stats(&session->stats);
 #endif
