@@ -40,6 +40,13 @@ static uint32_t required_rx_capacity(uint32_t output_frames)
     return output_frames + RVRT_SESSION_COMPLETE_FRAME_COUNT;
 }
 
+/**
+ * @brief Compute the total number of work frames expected for one output phase.
+ *
+ * DATA output maps one frame per entry. VOLTAGE output delivers each 32-bit
+ * membrane value as (bit_width / 8) separate 8-bit frames, so VOLTAGE needs
+ * four frames per entry. Returns false on overflow or an invalid bit_width.
+ */
 static bool expected_output_frame_count(
     const rvrt_artifact_output_mapping_view_t *view, uint32_t *frame_count)
 {
@@ -62,6 +69,7 @@ static bool expected_output_frame_count(
     return true;
 }
 
+/** @brief Return true when data points to a 4-byte-aligned address. */
 static bool is_int32_aligned(const void *data)
 {
     return (((uintptr_t)data) % sizeof(int32_t)) == 0U;
@@ -372,6 +380,7 @@ rvrt_session_status_t rvrt_session_load_config(const rvrt_artifact_t *artifact)
     return RVRT_SESSION_STATUS_OK;
 }
 
+/** @brief Increment the decoded_writes counter when a decode call wrote output. */
 static void record_decoded_write(rvrt_session_t *session, bool written)
 {
     if (written) {
@@ -383,6 +392,13 @@ static void record_decoded_write(rvrt_session_t *session, bool written)
     }
 }
 
+/**
+ * @brief Decode all buffered work-frame type 1 (DATA) frames into output.
+ *
+ * Iterates over every frame captured by the IRQ handler and calls
+ * rvrt_decode_output_frame() for each. Non-matching frames are silently
+ * skipped by the codec.
+ */
 static rvrt_session_status_t
 decode_data_phase(rvrt_session_t *session,
                   const rvrt_artifact_output_mapping_view_t *view,
@@ -402,6 +418,14 @@ decode_data_phase(rvrt_session_t *session,
     return RVRT_SESSION_STATUS_OK;
 }
 
+/**
+ * @brief Decode all buffered work-frame type 2 (VOLTAGE) frames into output.
+ *
+ * Validates that output is a 4-byte-aligned, whole-int32-sized buffer and that
+ * session->membrane_state has enough per-element accumulation slots, resets
+ * that state, then feeds every buffered frame through
+ * rvrt_decode_membrane_frame() to reassemble each 32-bit membrane value.
+ */
 static rvrt_session_status_t
 decode_membrane_phase(rvrt_session_t *session,
                       const rvrt_artifact_output_mapping_view_t *view,
@@ -436,6 +460,13 @@ decode_membrane_phase(rvrt_session_t *session,
     return RVRT_SESSION_STATUS_OK;
 }
 
+/**
+ * @brief Dispatch output decoding based on the phase's output mapping kind.
+ *
+ * RVRT_OUTPUT_DATA is decoded byte-wise via decode_data_phase(); RVRT_OUTPUT_
+ * VOLTAGE is decoded as 32-bit membrane values via decode_membrane_phase().
+ * Any other kind is treated as a runtime error.
+ */
 static rvrt_session_status_t
 decode_phase(rvrt_session_t *session,
              const rvrt_artifact_output_mapping_view_t *view, uint8_t *output,

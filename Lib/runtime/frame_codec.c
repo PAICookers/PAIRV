@@ -257,6 +257,14 @@ static uint8_t decode_payload(uint32_t payload, uint32_t bits, bool is_signed)
     return (uint8_t)value;
 }
 
+/**
+ * @brief Decode a received work frame's timestep and axon address into an
+ *        output mapping entry.
+ *
+ * Shared by both rvrt_decode_output_frame() and rvrt_decode_membrane_frame().
+ * Sets *found = false (OK) when the frame's runtime timestep is non-zero or no
+ * mapping entry matches the axon_bit_idx; these are valid skip conditions.
+ */
 static rvrt_status_t find_output_entry_for_work_frame(
     const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
     rvrt_artifact_output_entry_t *entry, bool *found)
