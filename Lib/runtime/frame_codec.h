@@ -136,6 +136,12 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
                          const rvrt_frame_t *frame, uint8_t *output,
                          uint32_t output_size, bool *written);
 
+/**
+ * @brief Per-output-element accumulation state for membrane-voltage decoding.
+ *
+ * Tracks the partial 32-bit value and how many of the four 8-bit parts
+ * (LSB-to-MSB) have been received so far for one output element.
+ */
 typedef struct rvrt_membrane_decode_state_s {
     uint32_t value;
     uint8_t parts_received;
