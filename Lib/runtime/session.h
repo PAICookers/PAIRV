@@ -64,6 +64,13 @@ typedef struct rvrt_session_config_s {
     uint32_t rx_capacity;
     rvrt_session_buffer_t *buffers;
     uint32_t buffer_count;
+    /**
+     * Optional per-output-element membrane accumulation state, required only
+     * when at least one PAICORE phase's output mapping kind is
+     * RVRT_OUTPUT_VOLTAGE. May be NULL when no phase decodes membrane frames.
+     */
+    rvrt_membrane_decode_state_t *membrane_state;
+    uint32_t membrane_state_capacity;
 } rvrt_session_config_t;
 
 /**
@@ -83,6 +90,8 @@ typedef struct rvrt_session_s {
     uint32_t input_bytes;
     uint32_t output_ref;
     uint32_t output_bytes;
+    rvrt_membrane_decode_state_t *membrane_state;
+    uint32_t membrane_state_capacity;
 #if RVRT_SESSION_ENABLE_STATS
     rvrt_session_stats_t stats;
 #endif
