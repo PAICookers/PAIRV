@@ -74,6 +74,8 @@ static rvrt_frame_t expected_output_frame(size_t index, uint8_t value)
     return frame;
 }
 
+/** @brief Build the expected work-frame type 2 (membrane voltage) for output
+ *         mapping entry at index with the given 8-bit payload fragment. */
 static rvrt_frame_t expected_membrane_frame(size_t index, uint8_t value)
 {
     rvrt_frame_t frame = {TEST_MEMBRANE_FRAME_HIGH,
@@ -81,6 +83,9 @@ static rvrt_frame_t expected_membrane_frame(size_t index, uint8_t value)
     return frame;
 }
 
+/** @brief Extract the part_index-th 8-bit byte (LSB-to-MSB) from a 32-bit
+ *         membrane value, matching the encoding rvrt_decode_membrane_frame()
+ *         expects across four interleaved work-frame type 2 fragments. */
 static uint8_t membrane_part(uint32_t value, uint32_t part_index)
 {
     return (uint8_t)((value >> (part_index * 8U)) & 0xFFU);
@@ -356,6 +361,16 @@ static int verify_output_codec(const rvrt_artifact_t *artifact,
     return 0;
 }
 
+/**
+ * @brief Self-test for rvrt_decode_membrane_frame() (work-frame type 2).
+ *
+ * Reuses the existing output mapping view with kind/bit_width patched to
+ * RVRT_OUTPUT_VOLTAGE/32, first confirms a membrane frame is silently
+ * ignored by the DATA decoder (rvrt_decode_output_frame), then feeds two
+ * interleaved 32-bit values (four 8-bit parts each, neurons A and B mixed
+ * in arrival order) through rvrt_decode_membrane_frame() and checks both
+ * values are reassembled correctly with exactly two completed writes.
+ */
 static int verify_membrane_codec(const rvrt_artifact_t *artifact)
 {
     rvrt_artifact_output_mapping_view_t voltage_view = {0};
