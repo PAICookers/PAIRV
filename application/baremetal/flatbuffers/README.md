@@ -34,9 +34,13 @@ is intentionally rejected.
 ## 3. What the program reads
 
 The program passes the embedded bytes to `rvrt_artifact_read()`, which checks
-alignment, FlatBuffers structure, schema version, and required runtime tables.
-It then calls `rvrt_artifact_get_info()` and reads the first configuration
-frame with `rvrt_artifact_config_frame_words()` when one exists.
+alignment, FlatBuffers structure, schema version, configuration frames, and
+I/O mappings. `execution_plan` is optional at this base-reader boundary, so an
+app may control PAICORE directly without a generated schedule. The higher-level
+`artifact_executor` explicitly rejects artifacts that omit the plan.
+
+The example then calls `rvrt_artifact_get_info()` and reads the first
+configuration frame with `rvrt_artifact_config_frame_words()` when one exists.
 
 Successful serial output ends with:
 

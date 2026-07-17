@@ -107,7 +107,6 @@ typedef struct rvrt_artifact_output_entry_s {
     uint32_t elem_idx;
     uint32_t copy_id;
     uint32_t axon_bit_idx;
-    uint32_t dtype;
 } rvrt_artifact_output_entry_t;
 
 /**
@@ -125,7 +124,7 @@ typedef struct rvrt_artifact_input_mapping_view_s {
 typedef struct rvrt_artifact_output_mapping_view_s {
     const void *entries;
     uint32_t entry_count;
-    uint32_t bit_width;
+    uint32_t dtype;
     uint32_t kind;
     uint32_t target_lcn;
 } rvrt_artifact_output_mapping_view_t;
@@ -146,7 +145,8 @@ typedef struct rvrt_artifact_stage_s {
 /**
  * @brief PAICORE stage metadata used to encode, synchronize, and decode a pass.
  *
- * latency_ticks is a positive 24-bit control-frame payload computed by PAIBox.
+ * latency_ticks is a positive 24-bit control-frame payload computed by the
+ * compiler.
  */
 typedef struct rvrt_artifact_paicore_phase_s {
     uint32_t input_ref;

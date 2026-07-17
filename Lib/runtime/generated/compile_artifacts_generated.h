@@ -94,12 +94,13 @@ enum DataType : int8_t {
   DataType_INT4 = 6,
   DataType_UINT8 = 7,
   DataType_INT8 = 8,
-  DataType_INT64 = 9,
+  DataType_INT32 = 9,
+  DataType_INT64 = 10,
   DataType_MIN = DataType_NOT_SET,
   DataType_MAX = DataType_INT64
 };
 
-inline const DataType (&EnumValuesDataType())[10] {
+inline const DataType (&EnumValuesDataType())[11] {
   static const DataType values[] = {
     DataType_NOT_SET,
     DataType_UINT1,
@@ -110,13 +111,14 @@ inline const DataType (&EnumValuesDataType())[10] {
     DataType_INT4,
     DataType_UINT8,
     DataType_INT8,
+    DataType_INT32,
     DataType_INT64
   };
   return values;
 }
 
 inline const char * const *EnumNamesDataType() {
-  static const char * const names[11] = {
+  static const char * const names[12] = {
     "NOT_SET",
     "UINT1",
     "INT1",
@@ -126,6 +128,7 @@ inline const char * const *EnumNamesDataType() {
     "INT4",
     "UINT8",
     "INT8",
+    "INT32",
     "INT64",
     nullptr
   };
@@ -590,8 +593,7 @@ struct OutputEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ELEM_IDX = 4,
     VT_COPY_ID = 6,
-    VT_AXON_BIT_IDX = 8,
-    VT_DTYPE = 10
+    VT_AXON_BIT_IDX = 8
   };
   uint32_t elem_idx() const {
     return GetField<uint32_t>(VT_ELEM_IDX, 0);
@@ -608,16 +610,12 @@ struct OutputEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int KeyCompareWithValue(uint32_t _axon_bit_idx) const {
     return static_cast<int>(axon_bit_idx() > _axon_bit_idx) - static_cast<int>(axon_bit_idx() < _axon_bit_idx);
   }
-  paibox::backendv2::generated::fbs::DataType dtype() const {
-    return static_cast<paibox::backendv2::generated::fbs::DataType>(GetField<int8_t>(VT_DTYPE, 0));
-  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_ELEM_IDX, 4) &&
            VerifyField<uint32_t>(verifier, VT_COPY_ID, 4) &&
            VerifyField<uint32_t>(verifier, VT_AXON_BIT_IDX, 4) &&
-           VerifyField<int8_t>(verifier, VT_DTYPE, 1) &&
            verifier.EndTable();
   }
 };
@@ -635,9 +633,6 @@ struct OutputEntryBuilder {
   void add_axon_bit_idx(uint32_t axon_bit_idx) {
     fbb_.AddElement<uint32_t>(OutputEntry::VT_AXON_BIT_IDX, axon_bit_idx, 0);
   }
-  void add_dtype(paibox::backendv2::generated::fbs::DataType dtype) {
-    fbb_.AddElement<int8_t>(OutputEntry::VT_DTYPE, static_cast<int8_t>(dtype), 0);
-  }
   explicit OutputEntryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -653,13 +648,11 @@ inline ::flatbuffers::Offset<OutputEntry> CreateOutputEntry(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t elem_idx = 0,
     uint32_t copy_id = 0,
-    uint32_t axon_bit_idx = 0,
-    paibox::backendv2::generated::fbs::DataType dtype = paibox::backendv2::generated::fbs::DataType_NOT_SET) {
+    uint32_t axon_bit_idx = 0) {
   OutputEntryBuilder builder_(_fbb);
   builder_.add_axon_bit_idx(axon_bit_idx);
   builder_.add_copy_id(copy_id);
   builder_.add_elem_idx(elem_idx);
-  builder_.add_dtype(dtype);
   return builder_.Finish();
 }
 
@@ -721,7 +714,7 @@ struct InputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table
     VT_NAME = 4,
     VT_SHAPE = 6,
     VT_BIT_WIDTH = 8,
-    VT_ENTRIES = 12
+    VT_ENTRIES = 10
   };
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
@@ -813,8 +806,8 @@ struct OutputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
     VT_NAME = 4,
     VT_SHAPE = 6,
     VT_KIND = 8,
-    VT_BIT_WIDTH = 10,
-    VT_ENTRIES = 14
+    VT_DTYPE = 10,
+    VT_ENTRIES = 12
   };
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
@@ -825,8 +818,8 @@ struct OutputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   paibox::backendv2::generated::fbs::OutputKind kind() const {
     return static_cast<paibox::backendv2::generated::fbs::OutputKind>(GetField<int8_t>(VT_KIND, 0));
   }
-  uint32_t bit_width() const {
-    return GetField<uint32_t>(VT_BIT_WIDTH, 0);
+  paibox::backendv2::generated::fbs::DataType dtype() const {
+    return static_cast<paibox::backendv2::generated::fbs::DataType>(GetField<int8_t>(VT_DTYPE, 0));
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *entries() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *>(VT_ENTRIES);
@@ -839,7 +832,7 @@ struct OutputTensorMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
            VerifyOffset(verifier, VT_SHAPE) &&
            verifier.VerifyTable(shape()) &&
            VerifyField<int8_t>(verifier, VT_KIND, 1) &&
-           VerifyField<uint32_t>(verifier, VT_BIT_WIDTH, 4) &&
+           VerifyField<int8_t>(verifier, VT_DTYPE, 1) &&
            VerifyOffset(verifier, VT_ENTRIES) &&
            verifier.VerifyVector(entries()) &&
            verifier.VerifyVectorOfTables(entries()) &&
@@ -860,8 +853,8 @@ struct OutputTensorMappingBuilder {
   void add_kind(paibox::backendv2::generated::fbs::OutputKind kind) {
     fbb_.AddElement<int8_t>(OutputTensorMapping::VT_KIND, static_cast<int8_t>(kind), 0);
   }
-  void add_bit_width(uint32_t bit_width) {
-    fbb_.AddElement<uint32_t>(OutputTensorMapping::VT_BIT_WIDTH, bit_width, 0);
+  void add_dtype(paibox::backendv2::generated::fbs::DataType dtype) {
+    fbb_.AddElement<int8_t>(OutputTensorMapping::VT_DTYPE, static_cast<int8_t>(dtype), 0);
   }
   void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>>> entries) {
     fbb_.AddOffset(OutputTensorMapping::VT_ENTRIES, entries);
@@ -882,13 +875,13 @@ inline ::flatbuffers::Offset<OutputTensorMapping> CreateOutputTensorMapping(
     ::flatbuffers::Offset<::flatbuffers::String> name = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0,
     paibox::backendv2::generated::fbs::OutputKind kind = paibox::backendv2::generated::fbs::OutputKind_DATA,
-    uint32_t bit_width = 0,
+    paibox::backendv2::generated::fbs::DataType dtype = paibox::backendv2::generated::fbs::DataType_NOT_SET,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>>> entries = 0) {
   OutputTensorMappingBuilder builder_(_fbb);
   builder_.add_entries(entries);
-  builder_.add_bit_width(bit_width);
   builder_.add_shape(shape);
   builder_.add_name(name);
+  builder_.add_dtype(dtype);
   builder_.add_kind(kind);
   return builder_.Finish();
 }
@@ -898,7 +891,7 @@ inline ::flatbuffers::Offset<OutputTensorMapping> CreateOutputTensorMappingDirec
     const char *name = nullptr,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::Shape> shape = 0,
     paibox::backendv2::generated::fbs::OutputKind kind = paibox::backendv2::generated::fbs::OutputKind_DATA,
-    uint32_t bit_width = 0,
+    paibox::backendv2::generated::fbs::DataType dtype = paibox::backendv2::generated::fbs::DataType_NOT_SET,
     std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputEntry>> *entries = nullptr) {
   auto name__ = name ? _fbb.CreateString(name) : 0;
   auto entries__ = entries ? _fbb.CreateVectorOfSortedTables<paibox::backendv2::generated::fbs::OutputEntry>(entries) : 0;
@@ -907,7 +900,7 @@ inline ::flatbuffers::Offset<OutputTensorMapping> CreateOutputTensorMappingDirec
       name__,
       shape,
       kind,
-      bit_width,
+      dtype,
       entries__);
 }
 

@@ -311,7 +311,7 @@ rvrt_artifact_status_t fill_copy_count(const fbs::CopyCount *source,
 rvrt_artifact_status_t copy_shape(const fbs::Shape *shape, uint32_t *rank,
                                   int32_t *dims, uint32_t *numel)
 {
-    if ((rank == nullptr) || (dims == nullptr) || (numel == nullptr)) {
+    if (numel == nullptr) {
         return RVRT_ARTIFACT_NULL_ARGUMENT;
     }
     if (shape == nullptr) {
@@ -333,13 +333,19 @@ rvrt_artifact_status_t copy_shape(const fbs::Shape *shape, uint32_t *rank,
             (product > (UINT32_MAX / static_cast<uint32_t>(dim)))) {
             return RVRT_ARTIFACT_OUT_OF_RANGE;
         }
-        dims[i] = dim;
+        if (dims != nullptr) {
+            dims[i] = dim;
+        }
         product *= static_cast<uint32_t>(dim);
     }
-    for (uint32_t i = source->size(); i < RVRT_ARTIFACT_MAX_RANK; ++i) {
-        dims[i] = 0;
+    if (dims != nullptr) {
+        for (uint32_t i = source->size(); i < RVRT_ARTIFACT_MAX_RANK; ++i) {
+            dims[i] = 0;
+        }
     }
-    *rank = static_cast<uint32_t>(source->size());
+    if (rank != nullptr) {
+        *rank = static_cast<uint32_t>(source->size());
+    }
     *numel = product;
     return RVRT_ARTIFACT_OK;
 }
@@ -366,6 +372,12 @@ rvrt_artifact_status_t mapping_dtype_bits(fbs::DataType dtype, uint32_t *bits)
         case fbs::DataType_INT8:
             *bits = 8U;
             return RVRT_ARTIFACT_OK;
+        case fbs::DataType_INT32:
+            *bits = 32U;
+            return RVRT_ARTIFACT_OK;
+        case fbs::DataType_INT64:
+            *bits = 64U;
+            return RVRT_ARTIFACT_OK;
         default:
             return RVRT_ARTIFACT_OUT_OF_RANGE;
     }
@@ -379,10 +391,8 @@ validate_input_mapping(const fbs::InputTensorMapping *mapping)
         return RVRT_ARTIFACT_MISSING_FIELD;
     }
 
-    uint32_t rank = 0U;
     uint32_t numel = 0U;
-    int32_t shape[RVRT_ARTIFACT_MAX_RANK] = {};
-    auto status = copy_shape(mapping->shape(), &rank, shape, &numel);
+    auto status = copy_shape(mapping->shape(), nullptr, nullptr, &numel);
     if (status != RVRT_ARTIFACT_OK) {
         return status;
     }
@@ -398,7 +408,8 @@ validate_input_mapping(const fbs::InputTensorMapping *mapping)
         }
         uint32_t bits = 0U;
         status = mapping_dtype_bits(entry->dtype(), &bits);
-        if ((status != RVRT_ARTIFACT_OK) || (bits != mapping->bit_width())) {
+        if ((status != RVRT_ARTIFACT_OK) || (bits > 8U) ||
+            (bits != mapping->bit_width())) {
             return RVRT_ARTIFACT_BAD_VALUE;
         }
     }
@@ -413,10 +424,8 @@ validate_output_mapping(const fbs::OutputTensorMapping *mapping)
         return RVRT_ARTIFACT_MISSING_FIELD;
     }
 
-    uint32_t rank = 0U;
     uint32_t numel = 0U;
-    int32_t shape[RVRT_ARTIFACT_MAX_RANK] = {};
-    auto status = copy_shape(mapping->shape(), &rank, shape, &numel);
+    auto status = copy_shape(mapping->shape(), nullptr, nullptr, &numel);
     if (status != RVRT_ARTIFACT_OK) {
         return status;
     }
@@ -435,18 +444,17 @@ validate_output_mapping(const fbs::OutputTensorMapping *mapping)
         }
         first = false;
         previous_key = entry->axon_bit_idx();
+    }
 
-        if (mapping->kind() == fbs::OutputKind_DATA) {
-            uint32_t bits = 0U;
-            status = mapping_dtype_bits(entry->dtype(), &bits);
-            if ((status != RVRT_ARTIFACT_OK) ||
-                (bits != mapping->bit_width())) {
-                return RVRT_ARTIFACT_BAD_VALUE;
-            }
-        } else if ((mapping->kind() != fbs::OutputKind_VOLTAGE) ||
-                   (mapping->bit_width() != 32U)) {
+    uint32_t bits = 0U;
+    status = mapping_dtype_bits(mapping->dtype(), &bits);
+    if (mapping->kind() == fbs::OutputKind_DATA) {
+        if ((status != RVRT_ARTIFACT_OK) || (bits > 8U)) {
             return RVRT_ARTIFACT_BAD_VALUE;
         }
+    } else if ((mapping->kind() != fbs::OutputKind_VOLTAGE) ||
+               (mapping->dtype() != fbs::DataType_INT32) || (bits != 32U)) {
+        return RVRT_ARTIFACT_BAD_VALUE;
     }
     return RVRT_ARTIFACT_OK;
 }
@@ -499,6 +507,9 @@ rvrt_artifact_status_t dtype_size(uint32_t dtype, uint32_t *bytes)
         case static_cast<uint32_t>(fbs::DataType_INT8):
             *bytes = 1U;
             return RVRT_ARTIFACT_OK;
+        case static_cast<uint32_t>(fbs::DataType_INT32):
+            *bytes = 4U;
+            return RVRT_ARTIFACT_OK;
         case static_cast<uint32_t>(fbs::DataType_INT64):
             *bytes = 8U;
             return RVRT_ARTIFACT_OK;
@@ -537,9 +548,7 @@ rvrt_artifact_status_t runtime_buffer_bytes(const rvrt_artifact_t *artifact,
     }
 
     uint32_t numel = 0U;
-    uint32_t local_rank = 0U;
-    int32_t local_shape[RVRT_ARTIFACT_MAX_RANK] = {};
-    status = copy_shape(buffer->shape(), &local_rank, local_shape, &numel);
+    status = copy_shape(buffer->shape(), rank, shape, &numel);
     if (status != RVRT_ARTIFACT_OK) {
         return status;
     }
@@ -552,14 +561,6 @@ rvrt_artifact_status_t runtime_buffer_bytes(const rvrt_artifact_t *artifact,
     }
     if (dtype != nullptr) {
         *dtype = buffer_dtype;
-    }
-    if (rank != nullptr) {
-        *rank = local_rank;
-    }
-    if (shape != nullptr) {
-        for (uint32_t i = 0U; i < RVRT_ARTIFACT_MAX_RANK; ++i) {
-            shape[i] = local_shape[i];
-        }
     }
     return RVRT_ARTIFACT_OK;
 }
@@ -645,15 +646,6 @@ rvrt_artifact_status_t rvrt_artifact_read(const uint8_t *data, size_t size,
     }
     const auto *io_mapping = root->io_mapping();
     const auto *config = root->config_frames();
-    const auto *plan = root->execution_plan();
-    const auto *target = (plan == nullptr) ? nullptr : plan->runtime_target();
-    if ((target == nullptr) || (target->target_id() == nullptr) ||
-        (target->profile_id() == nullptr) || (plan->buffers() == nullptr) ||
-        (plan->cpu_tasks() == nullptr) || (plan->stages() == nullptr) ||
-        (plan->paicore_phases() == nullptr)) {
-        RV_DEBUG_LOGE(kRvrtDebugTitle, "artifact missing required tables");
-        return RVRT_ARTIFACT_MISSING_FIELD;
-    }
     if ((io_mapping == nullptr) || (io_mapping->threads() == nullptr) ||
         (config == nullptr) || (config->words() == nullptr)) {
         RV_DEBUG_LOGE(kRvrtDebugTitle, "artifact missing root runtime tables");
@@ -769,7 +761,7 @@ rvrt_artifact_get_capacity(const rvrt_artifact_t *artifact,
     }
 
     uint32_t max_input_entries = 0U;
-    uint32_t max_output_entries = 0U;
+    uint32_t max_output_frames = 0U;
     for (uint32_t i = 0U; i < phase_count; ++i) {
         rvrt_artifact_paicore_phase_t phase{};
         status = rvrt_artifact_paicore_phase(artifact, i, &phase);
@@ -803,15 +795,28 @@ rvrt_artifact_get_capacity(const rvrt_artifact_t *artifact,
             return RVRT_ARTIFACT_MISSING_FIELD;
         }
         entry_count = static_cast<uint32_t>(output_entries->size());
-        if (entry_count > max_output_entries) {
-            max_output_entries = entry_count;
+        uint32_t frames_per_entry = 1U;
+        if (output_mapping->kind() == fbs::OutputKind_VOLTAGE) {
+            uint32_t output_bits = 0U;
+            status = mapping_dtype_bits(output_mapping->dtype(), &output_bits);
+            if ((status != RVRT_ARTIFACT_OK) || (output_bits % 8U != 0U)) {
+                return RVRT_ARTIFACT_BAD_VALUE;
+            }
+            frames_per_entry = output_bits / 8U;
+        }
+        if (entry_count > (UINT32_MAX / frames_per_entry)) {
+            return RVRT_ARTIFACT_OUT_OF_RANGE;
+        }
+        const uint32_t output_frames = entry_count * frames_per_entry;
+        if (output_frames > max_output_frames) {
+            max_output_frames = output_frames;
         }
     }
 
-    if (max_output_entries > (UINT32_MAX - kCapacityRxMargin)) {
+    if (max_output_frames > (UINT32_MAX - kCapacityRxMargin)) {
         return RVRT_ARTIFACT_OUT_OF_RANGE;
     }
-    capacity->rx_frame_count = max_output_entries + kCapacityRxMargin;
+    capacity->rx_frame_count = max_output_frames + kCapacityRxMargin;
     capacity->workspace_frame_count =
         (max_input_entries == 0U)
             ? 1U
@@ -836,7 +841,8 @@ rvrt_artifact_runtime_target(const rvrt_artifact_t *artifact,
     }
 
     const auto *source = plan->runtime_target();
-    if (source == nullptr) {
+    if ((source == nullptr) || (source->target_id() == nullptr) ||
+        (source->profile_id() == nullptr)) {
         return RVRT_ARTIFACT_MISSING_FIELD;
     }
 
@@ -1168,7 +1174,7 @@ rvrt_artifact_status_t rvrt_artifact_get_output_mapping_view(
     *view = {};
 
     const fbs::ThreadIOMapping *thread = nullptr;
-    auto status = thread_at(artifact, thread_index, &thread);
+    rvrt_artifact_status_t status = thread_at(artifact, thread_index, &thread);
     if (status != RVRT_ARTIFACT_OK) {
         return status;
     }
@@ -1184,7 +1190,7 @@ rvrt_artifact_status_t rvrt_artifact_get_output_mapping_view(
 
     view->entries = entries;
     view->entry_count = static_cast<uint32_t>(entries->size());
-    view->bit_width = output->bit_width();
+    view->dtype = static_cast<uint32_t>(output->dtype());
     view->kind = static_cast<uint32_t>(output->kind());
     view->target_lcn = thread->output_mappings()->target_lcn();
     return RVRT_ARTIFACT_OK;
@@ -1244,7 +1250,6 @@ rvrt_artifact_status_t rvrt_artifact_output_mapping_find(
     entry->elem_idx = candidate->elem_idx();
     entry->copy_id = candidate->copy_id();
     entry->axon_bit_idx = candidate->axon_bit_idx();
-    entry->dtype = static_cast<uint32_t>(candidate->dtype());
     *found = true;
     return RVRT_ARTIFACT_OK;
 }

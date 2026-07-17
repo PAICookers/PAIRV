@@ -1,5 +1,6 @@
 namespace paibox.backendv2.generated.fbs;
 
+// Logical tensor element type. Low-bit DATA values occupy one runtime byte.
 enum DataType : byte {
   NOT_SET = 0,
   UINT1 = 1,
@@ -10,8 +11,10 @@ enum DataType : byte {
   INT4 = 6,
   UINT8 = 7,
   INT8 = 8,
+  // PAICORE membrane voltage outputs use signed int32 tensors.
+  INT32 = 9,
   // CPU task index tensors use int64; PAICORE DATA payloads stay <= 8 bit.
-  INT64 = 9
+  INT64 = 10
 }
 
 enum OutputKind : byte {
@@ -43,26 +46,32 @@ table CopyCount {
 
 table TickParams {
   tick_start:uint;
+  // 0 means always active; N > 0 means active for N sync_all ticks.
   tick_duration:uint;
+  // 0 means no automatic reset.
   tick_initial:uint;
 }
 
 table InputEntry {
+  // Logical element index within the exported input tensor.
   elem_idx:uint;
   core_offset:CoreOffset;
   copy_count:CopyCount;
   tick_relative:uint;
   addr_axon:uint;
   target_lcn:uint;
+  // Logical copy id introduced by tiling/folding; unrelated to Copy_XY / Copy_X / Copy_Y.
   copy_id:uint;
+  // Data type interpreted by the first real consumer compute core.
   dtype:DataType = NOT_SET;
 }
 
 table OutputEntry {
   elem_idx:uint;
   copy_id:uint;
+  // DATA: output axon bit index. VOLTAGE: membrane voltage base index.
+  // Entries in one output mapping are strictly ordered by this field and unique.
   axon_bit_idx:uint (key);
-  dtype:DataType = NOT_SET;
 }
 
 table Shape {
@@ -72,8 +81,8 @@ table Shape {
 table InputTensorMapping {
   name:string;
   shape:Shape;
+  // Payload bit width shared by every entry in this input tensor.
   bit_width:uint;
-  tick:TickParams (deprecated);
   entries:[InputEntry];
 }
 
@@ -81,8 +90,8 @@ table OutputTensorMapping {
   name:string;
   shape:Shape;
   kind:OutputKind = DATA;
-  bit_width:uint;
-  tick:TickParams (deprecated);
+  // Decoded tensor element type and the sole source of output bit width.
+  dtype:DataType = NOT_SET;
   entries:[OutputEntry];
 }
 
@@ -105,11 +114,13 @@ table RuntimeParams {
 table CoreTick {
   core_offset:CoreOffset;
   tick:TickParams;
+  // PAIIR nodes deployed on this physical compute core.
   nodes:[string];
 }
 
 table ThreadIOMapping {
   thread_id:uint;
+  // Relative offset of the group-thread global-signal root core.
   root_core_offset:CoreOffset;
   runtime:RuntimeParams;
   input_mappings:InputTensorMappings;
@@ -122,7 +133,9 @@ table IOMapping {
 }
 
 table ConfigFrames {
+  // Flattened 32-bit words split from exported 64-bit config frames.
   words:[uint];
+  // Order of the 32-bit words within each logical 64-bit config frame.
   word_order:WordOrder = HIGH_FIRST;
 }
 
@@ -158,13 +171,14 @@ table CpuTask {
 table PaicorePhase {
   // Index into ExecutionPlan.buffers for frames encoded into PAICORE.
   input_ref:uint;
-  // Index into ExecutionPlan.buffers for DATA frames decoded from PAICORE.
+  // Index into ExecutionPlan.buffers for frames decoded from PAICORE.
   output_ref:uint;
   // Index into ThreadIOMapping.input_mappings.items for this PAICORE phase.
   input_mapping_ref:uint;
   // Index into ThreadIOMapping.output_mappings.items for this PAICORE phase.
   output_mapping_ref:uint;
-  // Input-to-output latency on the shared PAICORE logical timeline.
+  // PAIBox-computed input-to-output latency on the shared PAICORE logical
+  // timeline. CPU task execution contributes zero ticks.
   latency_ticks:uint;
 }
 

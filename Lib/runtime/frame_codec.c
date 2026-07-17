@@ -27,23 +27,23 @@
 
 #define RVRT_CTRL_PAYLOAD_MASK 0xFFFFFFU
 
-#define RVRT_OW1_TARGET_LCN_MAX 7U
-#define RVRT_OW1_TS_BITS 8U
-#define RVRT_OW1_TS_MASK 0xFFU
-#define RVRT_OW1_TS_HI_OFFSET 60U
-#define RVRT_OW1_TS_HI_MASK 0x1U
-#define RVRT_OW1_TS_LO_BITS 7U
-#define RVRT_OW1_TS_LO_OFFSET 17U
-#define RVRT_OW1_TS_LO_MASK 0x7FU
-#define RVRT_OW1_AXON_BITS 9U
-#define RVRT_OW1_AXON_OFFSET 8U
-#define RVRT_OW1_AXON_MASK 0x1FFU
-#define RVRT_OW1_DATA_BITS 8U
-#define RVRT_OW1_DATA_MASK 0xFFU
+/* Shared bit-field layout for PAICORE work-frame types 1 and 2. */
+#define RVRT_WORK_FRAME_TARGET_LCN_MAX 7U
+#define RVRT_WORK_FRAME_TS_BITS 8U
+#define RVRT_WORK_FRAME_TS_MASK 0xFFU
+#define RVRT_WORK_FRAME_TS_HI_OFFSET 60U
+#define RVRT_WORK_FRAME_TS_HI_MASK 0x1U
+#define RVRT_WORK_FRAME_TS_LO_BITS 7U
+#define RVRT_WORK_FRAME_TS_LO_OFFSET 17U
+#define RVRT_WORK_FRAME_TS_LO_MASK 0x7FU
+#define RVRT_WORK_FRAME_AX_BITS 9U
+#define RVRT_WORK_FRAME_AX_OFFSET 8U
+#define RVRT_WORK_FRAME_AX_MASK 0x1FFU
+#define RVRT_WORK_FRAME_PAYLOAD_MASK 0xFFU
 
-#define RVRT_MEMBRANE_DATA_BITS 32U
-#define RVRT_MEMBRANE_PART_BITS 8U
-#define RVRT_MEMBRANE_PART_COUNT 4U
+#define RVRT_VOLTAGE_LANE_BITS 8U
+#define RVRT_VOLTAGE_LANE_COUNT 4U
+#define RVRT_VOLTAGE_COMPLETE_MASK ((1U << RVRT_VOLTAGE_LANE_COUNT) - 1U)
 
 #define RVRT_DTYPE_UINT1 1U
 #define RVRT_DTYPE_INT1 2U
@@ -53,6 +53,7 @@
 #define RVRT_DTYPE_INT4 6U
 #define RVRT_DTYPE_UINT8 7U
 #define RVRT_DTYPE_INT8 8U
+#define RVRT_DTYPE_INT32 9U
 
 typedef struct dtype_info {
     uint8_t bits;
@@ -258,24 +259,21 @@ static uint8_t decode_payload(uint32_t payload, uint32_t bits, bool is_signed)
 }
 
 /**
- * @brief Decode a received work frame's timestep and axon address into an
- *        output mapping entry.
+ * @brief Decode a received work frame's timestep and flat axon-bit address.
  *
- * Shared by both rvrt_decode_output_frame() and rvrt_decode_membrane_frame().
- * Sets *found = false (OK) when the frame's runtime timestep is non-zero or no
- * mapping entry matches the axon_bit_idx; these are valid skip conditions.
+ * Sets valid false when the frame belongs to a nonzero runtime timestep.
  */
-static rvrt_status_t find_output_entry_for_work_frame(
+static rvrt_status_t output_axon_bit_idx_for_work_frame(
     const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
-    rvrt_artifact_output_entry_t *entry, bool *found)
+    uint32_t *axon_bit_idx, bool *valid)
 {
-    if ((view == NULL) || (view->entries == NULL) || (frame == NULL) ||
-        (entry == NULL) || (found == NULL)) {
+    if ((view == NULL) || (frame == NULL) || (axon_bit_idx == NULL) ||
+        (valid == NULL)) {
         return RVRT_STATUS_NULL_ARGUMENT;
     }
 
-    *found = false;
-    if (view->target_lcn > RVRT_OW1_TARGET_LCN_MAX) {
+    *valid = false;
+    if (view->target_lcn > RVRT_WORK_FRAME_TARGET_LCN_MAX) {
         RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output target_lcn=%u",
                       (unsigned)view->target_lcn);
         return RVRT_STATUS_UNSUPPORTED;
@@ -283,26 +281,27 @@ static rvrt_status_t find_output_entry_for_work_frame(
 
     const uint64_t raw_frame = frame_to_u64(frame);
     const uint32_t frame_timestep =
-        (uint32_t)((((raw_frame >> RVRT_OW1_TS_HI_OFFSET) & RVRT_OW1_TS_HI_MASK)
-                    << RVRT_OW1_TS_LO_BITS) |
-                   ((raw_frame >> RVRT_OW1_TS_LO_OFFSET) &
-                    RVRT_OW1_TS_LO_MASK));
+        (uint32_t)(((raw_frame >> RVRT_WORK_FRAME_TS_HI_OFFSET) &
+                    RVRT_WORK_FRAME_TS_HI_MASK)
+                       << RVRT_WORK_FRAME_TS_LO_BITS |
+                   ((raw_frame >> RVRT_WORK_FRAME_TS_LO_OFFSET) &
+                    RVRT_WORK_FRAME_TS_LO_MASK));
     const uint32_t runtime_timestep = frame_timestep >> view->target_lcn;
     if (runtime_timestep != 0U) {
         return RVRT_STATUS_OK;
     }
 
     const uint32_t frame_axon =
-        (uint32_t)((raw_frame >> RVRT_OW1_AXON_OFFSET) & RVRT_OW1_AXON_MASK);
-    const uint32_t ax_width = RVRT_OW1_AXON_BITS + view->target_lcn;
-    const uint32_t axon_bit_idx =
-        (((frame_timestep & RVRT_OW1_TS_MASK) << RVRT_OW1_AXON_BITS) |
-         frame_axon) &
-        ((1U << ax_width) - 1U);
+        (uint32_t)((raw_frame >> RVRT_WORK_FRAME_AX_OFFSET) &
+                   RVRT_WORK_FRAME_AX_MASK);
+    const uint32_t ax_width = RVRT_WORK_FRAME_AX_BITS + view->target_lcn;
+    *axon_bit_idx = (((frame_timestep & RVRT_WORK_FRAME_TS_MASK)
+                      << RVRT_WORK_FRAME_AX_BITS) |
+                     frame_axon) &
+                    ((1U << ax_width) - 1U);
 
-    const rvrt_artifact_status_t artifact_status =
-        rvrt_artifact_output_mapping_find(view, axon_bit_idx, entry, found);
-    return runtime_status_from_artifact(artifact_status);
+    *valid = true;
+    return RVRT_STATUS_OK;
 }
 
 /** @brief Encode one nonzero input entry as an offline work-type-1 frame. */
@@ -313,8 +312,8 @@ static rvrt_status_t build_work1_frame(const rvrt_artifact_input_entry_t *entry,
     if ((entry == NULL) || (frame == NULL)) {
         return RVRT_STATUS_NULL_ARGUMENT;
     }
-    if ((entry->target_lcn > RVRT_OW1_TARGET_LCN_MAX) ||
-        (entry->addr_axon > RVRT_OW1_AXON_MASK)) {
+    if ((entry->target_lcn > RVRT_WORK_FRAME_TARGET_LCN_MAX) ||
+        (entry->addr_axon > RVRT_WORK_FRAME_AX_MASK)) {
         return RVRT_STATUS_BAD_VALUE;
     }
 
@@ -331,23 +330,40 @@ static rvrt_status_t build_work1_frame(const rvrt_artifact_input_entry_t *entry,
     }
 
     const uint32_t timestep_capacity =
-        1U << (RVRT_OW1_TS_BITS - entry->target_lcn);
+        1U << (RVRT_WORK_FRAME_TS_BITS - entry->target_lcn);
     const uint32_t wrapped_timestep = timestep % timestep_capacity;
     const uint32_t resolved_timestep =
         (wrapped_timestep << entry->target_lcn) + entry->tick_relative;
-    if (resolved_timestep > RVRT_OW1_TS_MASK) {
+    if (resolved_timestep > RVRT_WORK_FRAME_TS_MASK) {
         return RVRT_STATUS_BAD_VALUE;
     }
 
     const uint64_t frame_addr =
-        pack_field(resolved_timestep >> RVRT_OW1_TS_LO_BITS,
-                   RVRT_OW1_TS_HI_OFFSET, RVRT_OW1_TS_HI_MASK) |
-        pack_field(resolved_timestep, RVRT_OW1_TS_LO_OFFSET,
-                   RVRT_OW1_TS_LO_MASK) |
-        pack_field(entry->addr_axon, RVRT_OW1_AXON_OFFSET, RVRT_OW1_AXON_MASK);
+        pack_field(resolved_timestep >> RVRT_WORK_FRAME_TS_LO_BITS,
+                   RVRT_WORK_FRAME_TS_HI_OFFSET, RVRT_WORK_FRAME_TS_HI_MASK) |
+        pack_field(resolved_timestep, RVRT_WORK_FRAME_TS_LO_OFFSET,
+                   RVRT_WORK_FRAME_TS_LO_MASK) |
+        pack_field(entry->addr_axon, RVRT_WORK_FRAME_AX_OFFSET,
+                   RVRT_WORK_FRAME_AX_MASK);
 
     frame_from_u64(dest | frame_addr | (uint64_t)payload, frame);
     return RVRT_STATUS_OK;
+}
+
+/** @brief Return true when frame is a work-frame type 1 DATA frame. */
+static inline bool rvrt_frame_is_work_type1(const rvrt_frame_t *frame)
+{
+    return rvrt_frame_is_work(frame) &&
+           (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 0x1U) ==
+            RVRT_FRAME_WORK_KIND_DATA);
+}
+
+/** @brief Return true when frame is a work-frame type 2 VOLTAGE frame. */
+static inline bool rvrt_frame_is_work_type2(const rvrt_frame_t *frame)
+{
+    return rvrt_frame_is_work(frame) &&
+           (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 0x1U) ==
+            RVRT_FRAME_WORK_KIND_VOLTAGE);
 }
 
 rvrt_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
@@ -358,18 +374,11 @@ rvrt_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
 }
 
 rvrt_status_t rvrt_build_sync_frame(const rvrt_artifact_t *artifact,
-                                    uint32_t thread_index, rvrt_frame_t *frame)
+                                    uint32_t thread_index, uint32_t sync_steps,
+                                    rvrt_frame_t *frame)
 {
-    rvrt_artifact_runtime_t runtime = {0};
-    rvrt_artifact_status_t artifact_status =
-        rvrt_artifact_thread_runtime(artifact, thread_index, &runtime);
-    rvrt_status_t status = runtime_status_from_artifact(artifact_status);
-    if (status != RVRT_STATUS_OK) {
-        return status;
-    }
-
     return build_control_frame(artifact, thread_index, RVRT_HDR_CTRL_TYPE1,
-                               runtime.sync_steps, frame);
+                               sync_steps, frame);
 }
 
 void rvrt_input_cursor_init(rvrt_input_cursor_t *cursor, uint32_t timestep)
@@ -470,16 +479,18 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
         return RVRT_STATUS_UNSUPPORTED;
     }
 
-    if ((view->bit_width == 0U) || (view->bit_width > RVRT_OW1_DATA_BITS)) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output bit_width=%u",
-                      (unsigned)view->bit_width);
-        return RVRT_STATUS_UNSUPPORTED;
+    uint32_t axon_bit_idx = 0U;
+    bool valid = false;
+    rvrt_status_t status =
+        output_axon_bit_idx_for_work_frame(view, frame, &axon_bit_idx, &valid);
+    if ((status != RVRT_STATUS_OK) || !valid) {
+        return status;
     }
-
     rvrt_artifact_output_entry_t entry = {0};
     bool found = false;
-    rvrt_status_t status =
-        find_output_entry_for_work_frame(view, frame, &entry, &found);
+    const rvrt_artifact_status_t artifact_status =
+        rvrt_artifact_output_mapping_find(view, axon_bit_idx, &entry, &found);
+    status = runtime_status_from_artifact(artifact_status);
     if (status != RVRT_STATUS_OK) {
         return status;
     }
@@ -489,18 +500,16 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
 
     uint32_t entry_bits = 0U;
     bool is_signed = false;
-    if (!dtype_bits(entry.dtype, &entry_bits, &is_signed) ||
-        (entry_bits != view->bit_width)) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
-                      "unsupported output dtype=%u bit_width=%u",
-                      (unsigned)entry.dtype, (unsigned)view->bit_width);
+    if (!dtype_bits(view->dtype, &entry_bits, &is_signed)) {
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output dtype=%u",
+                      (unsigned)view->dtype);
         return RVRT_STATUS_UNSUPPORTED;
     }
     if (entry.elem_idx >= output_size) {
         return RVRT_STATUS_OUT_OF_RANGE;
     }
 
-    const uint32_t payload = frame->low & RVRT_OW1_DATA_MASK;
+    const uint32_t payload = frame->low & RVRT_WORK_FRAME_PAYLOAD_MASK;
     if (!is_signed && ((payload & ~bit_mask(entry_bits)) != 0U)) {
         return RVRT_STATUS_OK;
     }
@@ -510,10 +519,10 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
     return RVRT_STATUS_OK;
 }
 
-rvrt_status_t rvrt_decode_membrane_frame(
+rvrt_status_t rvrt_decode_voltage_frame(
     const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
-    int32_t *output, uint32_t output_size,
-    rvrt_membrane_decode_state_t *state, uint32_t state_size, bool *written)
+    int32_t *output, uint32_t output_size, rvrt_voltage_decode_state_t *state,
+    uint32_t state_size, bool *written)
 {
     if ((view == NULL) || (view->entries == NULL) || (frame == NULL) ||
         (output == NULL) || (state == NULL) || (written == NULL)) {
@@ -526,21 +535,31 @@ rvrt_status_t rvrt_decode_membrane_frame(
     }
 
     if (view->kind != RVRT_OUTPUT_VOLTAGE) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported membrane output kind=%u",
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported voltage output kind=%u",
                       (unsigned)view->kind);
         return RVRT_STATUS_UNSUPPORTED;
     }
-    if (view->bit_width != RVRT_MEMBRANE_DATA_BITS) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
-                      "unsupported membrane output bit_width=%u",
-                      (unsigned)view->bit_width);
+    if (view->dtype != RVRT_DTYPE_INT32) {
+        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported voltage output dtype=%u",
+                      (unsigned)view->dtype);
         return RVRT_STATUS_UNSUPPORTED;
     }
 
+    uint32_t axon_bit_idx = 0U;
+    bool valid = false;
+    rvrt_status_t status =
+        output_axon_bit_idx_for_work_frame(view, frame, &axon_bit_idx, &valid);
+    if ((status != RVRT_STATUS_OK) || !valid) {
+        return status;
+    }
+
+    const uint32_t lane = (axon_bit_idx >> 3U) & (RVRT_VOLTAGE_LANE_COUNT - 1U);
+    const uint32_t base = axon_bit_idx - lane * RVRT_VOLTAGE_LANE_BITS;
     rvrt_artifact_output_entry_t entry = {0};
     bool found = false;
-    rvrt_status_t status =
-        find_output_entry_for_work_frame(view, frame, &entry, &found);
+    const rvrt_artifact_status_t artifact_status =
+        rvrt_artifact_output_mapping_find(view, base, &entry, &found);
+    status = runtime_status_from_artifact(artifact_status);
     if (status != RVRT_STATUS_OK) {
         return status;
     }
@@ -551,19 +570,24 @@ rvrt_status_t rvrt_decode_membrane_frame(
         return RVRT_STATUS_OUT_OF_RANGE;
     }
 
-    rvrt_membrane_decode_state_t *const slot = &state[entry.elem_idx];
-    if (slot->parts_received >= RVRT_MEMBRANE_PART_COUNT) {
+    rvrt_voltage_decode_state_t *const slot = &state[entry.elem_idx];
+    const uint8_t lane_mask = (uint8_t)(1U << lane);
+    if ((slot->received_mask & lane_mask) != 0U) {
         return RVRT_STATUS_BAD_VALUE;
     }
 
-    const uint32_t payload = frame->low & RVRT_OW1_DATA_MASK;
-    slot->value |= payload << (slot->parts_received * RVRT_MEMBRANE_PART_BITS);
-    slot->parts_received++;
+    slot->lanes[lane] = (uint8_t)(frame->low & RVRT_WORK_FRAME_PAYLOAD_MASK);
+    slot->received_mask |= lane_mask;
 
-    if (slot->parts_received == RVRT_MEMBRANE_PART_COUNT) {
-        output[entry.elem_idx] = (int32_t)slot->value;
-        slot->value = 0U;
-        slot->parts_received = 0U;
+    if (slot->received_mask == RVRT_VOLTAGE_COMPLETE_MASK) {
+        output[entry.elem_idx] =
+            (int32_t)((uint32_t)slot->lanes[0] |
+                      ((uint32_t)slot->lanes[1] << RVRT_VOLTAGE_LANE_BITS) |
+                      ((uint32_t)slot->lanes[2]
+                       << (2U * RVRT_VOLTAGE_LANE_BITS)) |
+                      ((uint32_t)slot->lanes[3]
+                       << (3U * RVRT_VOLTAGE_LANE_BITS)));
+        slot->received_mask = 0U;
         *written = true;
     }
 
