@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "io_mapping": {
+    "threads": [
+      {
+        "thread_id": 0,
+        "root_core_offset": { "xy": 0, "x": 0, "y": 0 },
+        "runtime": {
+          "timesteps": 1,
+          "tick_depth": 1,
+          "sync_steps": 1,
+          "decode_mode": "STREAM"
+        },
+        "input_mappings": {
+          "items": [
+            {
+              "name": "input",
+              "shape": { "size": [2] },
+              "bit_width": 8,
+              "entries": [
+                {
+                  "elem_idx": 0,
+                  "core_offset": { "xy": 0, "x": 0, "y": 0 },
+                  "copy_count": { "xy": 0, "x": 0, "y": 0 },
+                  "tick_relative": 0,
+                  "addr_axon": 0,
+                  "target_lcn": 0,
+                  "copy_id": 0,
+                  "dtype": "UINT8"
+                },
+                {
+                  "elem_idx": 1,
+                  "core_offset": { "xy": 0, "x": 0, "y": 0 },
+                  "copy_count": { "xy": 0, "x": 0, "y": 0 },
+                  "tick_relative": 0,
+                  "addr_axon": 1,
+                  "target_lcn": 0,
+                  "copy_id": 0,
+                  "dtype": "UINT8"
+                }
+              ]
+            }
+          ]
+        },
+        "output_mappings": {
+          "target_lcn": 0,
+          "items": [
+            {
+              "name": "paicore_output",
+              "shape": { "size": [2] },
+              "kind": "DATA",
+              "dtype": "UINT8",
+              "entries": [
+                { "elem_idx": 0, "copy_id": 0, "axon_bit_idx": 0 },
+                { "elem_idx": 1, "copy_id": 0, "axon_bit_idx": 1 }
+              ]
+            }
+          ]
+        },
+        "core_ticks": []
+      }
+    ]
+  },
+  "config_frames": {
+    "words": [0, 0],
+    "word_order": "HIGH_FIRST"
+  },
+  "execution_plan": {
+    "runtime_target": {
+      "target_id": "rv_cpu0",
+      "profile_id": "rv_cpu0",
+      "required_task_abi_version": 1
+    },
+    "buffers": [
+      { "kind": "TENSOR", "dtype": "UINT8", "shape": { "size": [2] } },
+      { "kind": "TENSOR", "dtype": "UINT8", "shape": { "size": [2] } },
+      { "kind": "TENSOR", "dtype": "UINT8", "shape": { "size": [2] } }
+    ],
+    "cpu_tasks": [
+      { "input_ref": 1, "output_ref": 2 }
+    ],
+    "stages": [
+      { "stage_index": 0, "kind": "PAICORE", "ref_index": 0 },
+      { "stage_index": 1, "kind": "CPU_TASK", "ref_index": 0 }
+    ],
+    "paicore_phases": [
+      {
+        "input_ref": 0,
+        "output_ref": 1,
+        "input_mapping_ref": 0,
+        "output_mapping_ref": 0,
+        "latency_ticks": 1
+      }
+    ]
+  }
+}
