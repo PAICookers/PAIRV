@@ -39,35 +39,19 @@ typedef struct rvrt_frame_s {
 #define RVRT_OUTPUT_DATA 0U
 #define RVRT_OUTPUT_VOLTAGE 1U
 
-/** @brief Return true when frame has the PAICORE work-frame type tag. */
-static inline bool rvrt_frame_is_work(const rvrt_frame_t *frame)
-{
-    return (frame != NULL) && (((frame->high >> RVRT_FRAME_TYPE_OFFSET) &
-                                0x3U) == RVRT_FRAME_TYPE_WORK);
-}
-
-/** @brief Return true when frame is a work-frame type 1 DATA frame. */
-static inline bool rvrt_frame_is_work_type1(const rvrt_frame_t *frame)
-{
-    return rvrt_frame_is_work(frame) &&
-           (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 0x1U) ==
-            RVRT_FRAME_WORK_KIND_DATA);
-}
-
-/** @brief Return true when frame is a work-frame type 2 membrane-voltage frame. */
-static inline bool rvrt_frame_is_work_type2(const rvrt_frame_t *frame)
-{
-    return rvrt_frame_is_work(frame) &&
-           (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 0x1U) ==
-            RVRT_FRAME_WORK_KIND_VOLTAGE);
-}
-
 /** @brief Return true when frame marks completion of the current PAICORE pass.
  */
 static inline bool rvrt_frame_is_complete(const rvrt_frame_t *frame)
 {
     return (frame != NULL) && (((frame->high >> RVRT_FRAME_KIND_OFFSET) &
                                 0xFU) == RVRT_FRAME_KIND_COMPLETE);
+}
+
+/** @brief Return true when frame has the PAICORE work-frame type tag. */
+static inline bool rvrt_frame_is_work(const rvrt_frame_t *frame)
+{
+    return (frame != NULL) && (((frame->high >> RVRT_FRAME_TYPE_OFFSET) &
+                                0x3U) == RVRT_FRAME_TYPE_WORK);
 }
 
 /** @brief Resumable position while one input mapping is emitted in chunks. */
@@ -86,13 +70,15 @@ rvrt_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
                                     uint32_t thread_index, rvrt_frame_t *frame);
 
 /**
- * @brief Build the artifact-default synchronization control frame.
- * @param artifact Verified artifact providing thread runtime metadata.
+ * @brief Build a synchronization control frame with an explicit step count.
+ * @param artifact Verified artifact providing the thread root address.
  * @param thread_index Artifact thread addressed by the control frame.
+ * @param sync_steps Positive 24-bit synchronization payload.
  * @param frame Receives the logical high/low frame words.
  */
 rvrt_status_t rvrt_build_sync_frame(const rvrt_artifact_t *artifact,
-                                    uint32_t thread_index, rvrt_frame_t *frame);
+                                    uint32_t thread_index, uint32_t sync_steps,
+                                    rvrt_frame_t *frame);
 
 /**
  * @brief Reset a cursor before encoding input at the given runtime timestep.
@@ -137,35 +123,33 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
                          uint32_t output_size, bool *written);
 
 /**
- * @brief Per-output-element accumulation state for membrane-voltage decoding.
+ * @brief Per-output-element accumulation state for 32-bit voltage decoding.
  *
- * Tracks the partial 32-bit value and how many of the four 8-bit parts
- * (LSB-to-MSB) have been received so far for one output element.
+ * Tracks the partial value and the set of received 8-bit lane indices.
  */
-typedef struct rvrt_membrane_decode_state_s {
-    uint32_t value;
-    uint8_t parts_received;
-} rvrt_membrane_decode_state_t;
+typedef struct rvrt_voltage_decode_state_s {
+    uint8_t lanes[4];
+    uint8_t received_mask;
+} rvrt_voltage_decode_state_t;
 
 /**
- * @brief Decode one work-frame type 2 membrane-voltage data part.
+ * @brief Decode one work-frame type 2 voltage lane.
  *
- * One membrane voltage is delivered as four 8-bit parts in LSB-to-MSB order.
- * This function keeps per-output-element accumulation in state, so frame parts
- * from different neurons may be interleaved as long as each neuron is locally
- * ordered. written becomes true only when a full int32 value is completed.
+ * One voltage is delivered as four address-selected 8-bit lanes. Lanes from
+ * different elements may be interleaved and lanes for one element may arrive
+ * in any order. written becomes true only when all four lanes are present.
  * @param view Borrowed output mapping used to identify the frame address.
  * @param frame Received logical high/low frame words.
- * @param output Contiguous int32 membrane output buffer.
+ * @param output Contiguous int32 voltage output buffer.
  * @param output_size Number of int32 elements in output.
  * @param state Per-output-element accumulation state.
  * @param state_size Number of entries in state.
  * @param written Receives whether output was modified.
  */
-rvrt_status_t rvrt_decode_membrane_frame(
+rvrt_status_t rvrt_decode_voltage_frame(
     const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
-    int32_t *output, uint32_t output_size,
-    rvrt_membrane_decode_state_t *state, uint32_t state_size, bool *written);
+    int32_t *output, uint32_t output_size, rvrt_voltage_decode_state_t *state,
+    uint32_t state_size, bool *written);
 
 const char *rvrt_status_string(rvrt_status_t status);
 
