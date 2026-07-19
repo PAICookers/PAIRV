@@ -9,8 +9,8 @@ decode output, or execute CPU tasks.
 Copy the matching target-package artifact and schema from a PAIBox export:
 
 ```sh
-cp <export>/runtime/targets/rv_cpu0/compile_artifacts.bin fixtures/
-cp <export>/runtime/targets/rv_cpu0/compile_artifacts.fbs fixtures/
+cp <export>/runtime/targets/rv_cpu0/compile_artifacts.bin assets/
+cp <export>/runtime/targets/rv_cpu0/compile_artifacts.fbs assets/
 ```
 
 `compile_artifacts.bin` is embedded in the firmware by `objcopy` and linked
