@@ -10,7 +10,7 @@
 
 可参考完整的最小应用：
 [`application/runtime/mnist`](../../application/runtime/mnist)。它展示了 8 个应用
-timestep 的输入发送、一次同步、全窗口 DATA 输出解码，以及与软件 oracle 的比较。
+timestep 的输入发送、一次同步、全窗口 DATA 输出解码，以及与预期输出的比较。
 
 ## 1. 模块与术语
 
@@ -18,7 +18,7 @@ timestep 的输入发送、一次同步、全窗口 DATA 输出解码，以及�
 | --- | --- | --- |
 | `artifact_reader.*` | 验证 FlatBuffers artifact 并借出 runtime、输入 mapping、输出 mapping | `rvrt_artifact_read()`、`rvrt_artifact_thread_runtime()` |
 | `frame_codec.*` | 构造/识别逻辑帧，编码输入、解码 DATA 或 VOLTAGE 输出 | `rvrt_decode_output_frames()` |
-| `session.*` | 加载配置帧、通过 NoC 收发、等待 PAICORE 完成帧 | `rvrt_session_load_config()`、`rvrt_session_sync_wait()` |
+| `session.*` | 加载配置帧、模型复位、通过 NoC 收发并等待 PAICORE 完成帧 | `rvrt_session_load_config()`、`rvrt_session_reset_model()`、`rvrt_session_sync_wait()` |
 | `session_io.*` | 将 cursor、分块编码和发送循环封装为一个输入 timestep 操作 | `rvrt_session_send_input_timestep()` |
 
 几个核心术语：
@@ -50,6 +50,7 @@ chunk”是 `rvrt_session_send_input_timestep()` 隐藏的实现步骤，普通�
 artifact bytes
   -> artifact_reader: runtime + input/output mapping
   -> session: load_config
+  -> session: reset_model（独立样本边界，可选）
   -> session_io: send_input_timestep (重复 timesteps 次)
   -> session: sync_wait
   -> frame_codec: decode_output_frames
@@ -178,7 +179,7 @@ FlatBuffers 头；它们只通过本目录的公开 runtime API 消费 artifact�
 3. runtime 测试通过后，用匹配版本的 PAIBox 重新导出每个 demo 的
    `compile_artifacts.bin`。不要只替换二进制而保留旧 runtime。
 4. 仅当模型 I/O shape、dtype、timestep 或输出语义变化时，才更新 demo 的输入数据、
-   静态容量、oracle 和业务后处理；随后重新运行 host 测试并编译该 demo。
+   静态容量、预期输出和业务后处理；随后重新运行 host 测试并编译该 demo。
 
 若 schema version 未变，且新增字段不影响当前 reader、mapping 或 frame 语义，已有
 artifact 与 demo 无需为了 schema 文件本身而刷新。生成 binding 的来源与字段参考见
@@ -208,6 +209,27 @@ if (rvrt_session_init(&session, &config) != RVRT_SESSION_OK ||
 
 `rvrt_session_init()`绑定 artifact/thread/RX storage 并注册 NoC IRQ。
 `rvrt_session_load_config()`从 artifact 读取静态配置帧并写入 PAICORE。
+
+### 独立样本与流式推理
+
+初始化配置和模型状态复位是两个不同操作：
+
+- `rvrt_session_load_config()`只发送静态配置帧，通常每个 session 调用一次。
+- `rvrt_session_reset_model()`发送 Type-2 初始化帧，等待 PAICORE 返回 complete，
+  并在内部消费该阶段的 RX 帧。它不重新加载配置。
+- 独立样本应用应在第一个样本前，以及每个后续样本开始前调用
+  `rvrt_session_reset_model()`。
+- 流式应用不在时间步或样本之间调用 reset；它持续发送输入并同步推进。
+
+```c
+if (rvrt_session_reset_model(&session, timeout_ms) != RVRT_SESSION_OK) {
+    return 1;
+}
+```
+
+artifact 中的 `tick_initial` 是 PAICORE core 的硬件自动复位配置，不是应用样本边界
+策略。编译 artifact 时应保证它与应用选择的独立样本或流式语义一致；runtime 不会
+根据该字段自动插入或跳过 `reset_model()`。
 
 需要区分三类状态码：
 
@@ -254,8 +276,8 @@ cursor 是一个可恢复位置，不是额外的模型配置。它让固定大�
 完整编码任意长度的 input mapping。普通应用无需保存或配置它。
 
 `rvrt_build_init_frame()`和`rvrt_build_sync_frame()`是 frame 级控制帧构造接口。
-标准 session 流程已分别在配置加载和同步中处理它们；除非实现自定义传输层，否则
-不应直接调用。
+标准 session 流程应使用 `rvrt_session_reset_model()`和
+`rvrt_session_sync_wait()`；除非实现自定义传输层，否则不应直接调用 frame builder。
 
 ## 7. 同步并获取 RX frames
 
@@ -358,7 +380,8 @@ if (rvrt_session_get_stats(&session, &stats) == RVRT_SESSION_OK) {
 4. 使用 artifact 的 `runtime.sync_steps`调用一次 `rvrt_session_sync_wait()`。
 5. 将全部 RX frames 传给 `rvrt_decode_output_frames()`。
 6. 按 `runtime.timesteps * output_view.element_count`提供输出空间。
-7. 在应用侧实现模型特有的后处理与结果校验。
+7. 独立样本在下一个样本开始前调用 `rvrt_session_reset_model()`；流式应用不调用。
+8. 在应用侧实现模型特有的后处理与结果校验。
 
 满足以上约束后，应用不需要理解 PAICORE 的内部流水线推进，也不需要手写 input
 cursor、同步控制帧或多 timestep DATA 输出的 frame 地址解析。
