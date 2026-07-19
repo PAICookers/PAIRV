@@ -98,8 +98,9 @@ typedef struct rvrt_input_cursor_s {
 /**
  * @brief Build the initialization control frame for an artifact thread.
  *
- * Standard session use does not call this directly: configuration loading
- * already performs the required control flow.
+ * Standard session use should call rvrt_session_reset_model(), which sends
+ * this frame through an armed completion barrier. Use this builder directly
+ * only when implementing a custom transport layer.
  * @param artifact Verified artifact providing the thread root address.
  * @param thread_index Zero-based artifact thread index.
  * @param frame Receives the logical high/low frame words; must not be NULL.

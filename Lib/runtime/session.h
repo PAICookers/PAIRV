@@ -62,7 +62,7 @@ typedef struct rvrt_session_phase_s {
 
 /** @brief Transport counters accumulated when statistics are enabled. */
 typedef struct rvrt_session_stats_s {
-    /** Frames submitted through send_frames or synchronization. */
+    /** Frames submitted through send_frames or control barriers. */
     uint32_t sent_frames;
     /** Raw frames received across completed and failed barriers. */
     uint32_t rx_frames;
@@ -165,6 +165,24 @@ rvrt_session_status_t rvrt_session_load_config(rvrt_session_t *session);
 rvrt_session_status_t rvrt_session_send_frames(rvrt_session_t *session,
                                                const rvrt_frame_t *frames,
                                                uint32_t frame_count);
+
+/**
+ * @brief Reset the deployed PAICORE model and wait for its completion frame.
+ *
+ * Sends one Type-2 initialization control frame through a complete barrier.
+ * The initialization-phase RX frames are consumed internally because a
+ * conforming PAICORE response contains only the completion frame. This resets
+ * the model state without reloading static configuration frames. Applications
+ * should call this at the boundary between independent samples; streaming
+ * applications should not call it between input timesteps or samples.
+ * @param session Initialized, unarmed session with a nonempty RX buffer.
+ * @param timeout_ms Maximum wall-clock wait expressed in milliseconds.
+ * @return RVRT_SESSION_OK after the completion frame; RVRT_SESSION_TIMEOUT,
+ *         RVRT_SESSION_OVERFLOW, or RVRT_SESSION_HARDWARE_ERROR for a failed
+ *         barrier; RVRT_SESSION_RUNTIME_ERROR for invalid state or init frame.
+ */
+rvrt_session_status_t rvrt_session_reset_model(rvrt_session_t *session,
+                                               uint32_t timeout_ms);
 
 /**
  * @brief Execute one indivisible synchronization barrier.
