@@ -57,6 +57,17 @@ dkms.conf
 *.log
 *.elf
 *.map
+*.dasm
+*.dump
+*.srec
+*.verilog
+
+tags
+ctags
+TAGS
+TAG
+CTAGS
+
 setup_config.sh
 
 .vscode/
@@ -67,8 +78,8 @@ tasks/
 # Local agent/tooling files
 .agents/
 .claude/
-.qwen/
-.trellis/
+.codebase-memory/
 .codex
 AGENTS.md
 CLAUDE.md
+skills-lock.json
