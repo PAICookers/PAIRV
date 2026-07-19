@@ -19,25 +19,17 @@ extern const uint8_t _binary_generated_compile_artifacts_bin_size[];
 #define APP_OUTPUT_ELEMENTS MNIST_OUTPUT_ELEMENTS
 #define APP_TIMEOUT_MS 2000U
 
-#ifndef RVRT_APP_WORKSPACE_FRAMES
-#define RVRT_APP_WORKSPACE_FRAMES 32U
-#endif
-
+/* One DATA frame per output element and timestep, plus the complete frame. */
 #ifndef RVRT_APP_RX_FRAMES
-#define RVRT_APP_RX_FRAMES 512U
+#define RVRT_APP_RX_FRAMES (APP_TIMESTEPS * APP_OUTPUT_ELEMENTS + 1U)
 #endif
 
-#if (RVRT_APP_WORKSPACE_FRAMES < 1) ||                                         \
-    (RVRT_APP_WORKSPACE_FRAMES > RVRT_MAX_WORKSPACE_FRAMES)
-#error "RVRT_APP_WORKSPACE_FRAMES must fit the configured runtime workspace"
-#endif
-
-#if RVRT_APP_RX_FRAMES < 1
-#error "RVRT_APP_RX_FRAMES must be positive"
+#if RVRT_APP_RX_FRAMES < (APP_TIMESTEPS * APP_OUTPUT_ELEMENTS + 1U)
+#error "RVRT_APP_RX_FRAMES must hold every expected DATA and complete frame"
 #endif
 
 static rvrt_frame_t g_rx_frames[RVRT_APP_RX_FRAMES];
-static rvrt_frame_t g_workspace[RVRT_APP_WORKSPACE_FRAMES];
+static rvrt_frame_t g_workspace[32U];
 static uint8_t g_input[APP_TIMESTEPS * APP_INPUT_BYTES];
 
 static size_t binary_size(const uint8_t *size_symbol)
@@ -75,9 +67,11 @@ int main(void)
         _binary_generated_compile_artifacts_bin_start;
     const size_t artifact_size =
         binary_size(_binary_generated_compile_artifacts_bin_size);
-    mnist_build_input(g_input);
-    const uint8_t *const input_data = g_input;
-    const uint8_t *const expected = mnist_expected_output;
+    const uint32_t workspace_capacity =
+        (RVRT_MAX_WORKSPACE_FRAMES <
+         (uint32_t)(sizeof(g_workspace) / sizeof(g_workspace[0])))
+            ? RVRT_MAX_WORKSPACE_FRAMES
+            : (uint32_t)(sizeof(g_workspace) / sizeof(g_workspace[0]));
 
     /* 解析 artifact，并取得同一 thread 的运行参数与 I/O mapping */
     rvrt_artifact_t artifact = {0};
@@ -111,6 +105,7 @@ int main(void)
         (runtime.sync_steps != runtime.tick_depth + runtime.timesteps - 1U) ||
         (input_view.entry_count != APP_INPUT_BYTES) ||
         (output_view.kind != RVRT_OUTPUT_DATA) ||
+        (output_view.entry_count != APP_OUTPUT_ELEMENTS) ||
         (output_view.element_count != APP_OUTPUT_ELEMENTS)) {
         printf("%s: artifact contract mismatch\r\n", APP_TITLE);
         return 1;
@@ -133,61 +128,76 @@ int main(void)
         return fail_session("load config", session_status);
     }
 
-    /* 输入 helper 内部完成 cursor、chunk 编码和发送循环 */
-    for (uint32_t timestep = 0U; timestep < APP_TIMESTEPS; ++timestep) {
-        session_status = rvrt_session_send_input_timestep(
-            &session, &input_view, timestep,
-            &input_data[timestep * APP_INPUT_BYTES], APP_INPUT_BYTES,
-            g_workspace, RVRT_APP_WORKSPACE_FRAMES);
+    for (uint32_t sample = 0U; sample < MNIST_SAMPLE_COUNT; ++sample) {
+        /* 每个独立样本从确定状态开始；流式应用不会在样本间调用此接口。 */
+        session_status = rvrt_session_reset_model(&session, APP_TIMEOUT_MS);
         if (session_status != RVRT_SESSION_OK) {
-            return fail_session("send input", session_status);
+            return fail_session("reset model", session_status);
         }
-    }
 
-    /* 使用 artifact 的 sync_steps 推进完整流水线，并借用本次 RX 帧序列 */
-    const rvrt_frame_t *rx_frames = NULL;
-    uint32_t rx_frame_count = 0U;
-    session_status =
-        rvrt_session_sync_wait(&session, runtime.sync_steps, APP_TIMEOUT_MS,
-                               &rx_frames, &rx_frame_count);
-    if (session_status != RVRT_SESSION_OK) {
-        return fail_session("sync", session_status);
-    }
+        mnist_build_input(sample, g_input);
 
-    /* Runtime 将有效 STREAM DATA 归一化为 [应用 timestep][输出元素] */
-    uint8_t output[APP_TIMESTEPS * APP_OUTPUT_ELEMENTS] = {0};
-    rvrt_status_t status =
-        rvrt_decode_output_frames(&output_view, &runtime, rx_frames,
-                                  rx_frame_count, output, sizeof(output));
-    if (status != RVRT_STATUS_OK) {
-        return fail_runtime("decode", status);
-    }
-    if (memcmp(output, expected, sizeof(output)) != 0) {
-        printf("%s: output mismatch\r\n", APP_TITLE);
-        return 1;
-    }
-
-    /* spike sum 和 argmax 是 MNIST 业务后处理 */
-    uint32_t sums[APP_OUTPUT_ELEMENTS] = {0};
-    for (uint32_t timestep = 0U; timestep < APP_TIMESTEPS; ++timestep) {
-        for (uint32_t elem = 0U; elem < APP_OUTPUT_ELEMENTS; ++elem) {
-            sums[elem] += output[timestep * APP_OUTPUT_ELEMENTS + elem];
+        /* 输入 helper 内部完成 chunk 编码和发送循环。 */
+        for (uint32_t timestep = 0U; timestep < APP_TIMESTEPS; ++timestep) {
+            session_status = rvrt_session_send_input_timestep(
+                &session, &input_view, timestep,
+                &g_input[timestep * APP_INPUT_BYTES], APP_INPUT_BYTES,
+                g_workspace, workspace_capacity);
+            if (session_status != RVRT_SESSION_OK) {
+                return fail_session("send input", session_status);
+            }
         }
-    }
-    uint32_t prediction = 0U;
-    for (uint32_t elem = 1U; elem < APP_OUTPUT_ELEMENTS; ++elem) {
-        if (sums[elem] > sums[prediction]) {
-            prediction = elem;
+
+        /* 使用 artifact 的 sync_steps 推进完整流水线。 */
+        const rvrt_frame_t *rx_frames = NULL;
+        uint32_t rx_frame_count = 0U;
+        session_status = rvrt_session_sync_wait(
+            &session, runtime.sync_steps, APP_TIMEOUT_MS, &rx_frames,
+            &rx_frame_count);
+        if (session_status != RVRT_SESSION_OK) {
+            return fail_session("sync", session_status);
         }
-    }
-    if (prediction != 7U) {
-        printf("%s: prediction=%u expected=7\r\n", APP_TITLE,
-               (unsigned)prediction);
-        return 1;
+
+        /* Runtime 将有效 STREAM DATA 归一化为 [应用时间步][输出元素]。 */
+        uint8_t output[APP_TIMESTEPS * APP_OUTPUT_ELEMENTS] = {0};
+        rvrt_status_t runtime_status = rvrt_decode_output_frames(
+            &output_view, &runtime, rx_frames, rx_frame_count, output,
+            sizeof(output));
+        if (runtime_status != RVRT_STATUS_OK) {
+            return fail_runtime("decode", runtime_status);
+        }
+        if (memcmp(output, mnist_expected_output[sample], sizeof(output)) != 0) {
+            printf("%s: sample=%u output mismatch\r\n", APP_TITLE,
+                   (unsigned)sample);
+            return 1;
+        }
+
+        /* spike sum 和 argmax 是 MNIST 业务后处理。 */
+        uint32_t sums[APP_OUTPUT_ELEMENTS] = {0};
+        for (uint32_t timestep = 0U; timestep < APP_TIMESTEPS; ++timestep) {
+            for (uint32_t elem = 0U; elem < APP_OUTPUT_ELEMENTS; ++elem) {
+                sums[elem] += output[timestep * APP_OUTPUT_ELEMENTS + elem];
+            }
+        }
+        uint32_t prediction = 0U;
+        for (uint32_t elem = 1U; elem < APP_OUTPUT_ELEMENTS; ++elem) {
+            if (sums[elem] > sums[prediction]) {
+                prediction = elem;
+            }
+        }
+        if (prediction != mnist_expected_labels[sample]) {
+            printf("%s: sample=%u prediction=%u expected=%u\r\n", APP_TITLE,
+                   (unsigned)sample, (unsigned)prediction,
+                   (unsigned)mnist_expected_labels[sample]);
+            return 1;
+        }
+
+        printf("%s: sample=%u prediction=%u PASS\r\n", APP_TITLE,
+               (unsigned)sample, (unsigned)prediction);
     }
 
-    printf("%s: decoded=%ux%u prediction=%u MNIST_PASS\r\n", APP_TITLE,
-           (unsigned)runtime.timesteps, (unsigned)output_view.element_count,
-           (unsigned)prediction);
+    printf("%s: samples=%u decoded=%ux%u MNIST_PASS\r\n", APP_TITLE,
+           (unsigned)MNIST_SAMPLE_COUNT, (unsigned)runtime.timesteps,
+           (unsigned)output_view.element_count);
     return 0;
 }
