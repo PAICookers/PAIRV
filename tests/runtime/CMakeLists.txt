@@ -6,6 +6,7 @@ set(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 
 add_executable(runtime_codec_test
   test_runtime_codec.c
+  "${REPO_ROOT}/application/runtime/mnist/data.c"
   "${REPO_ROOT}/Lib/debug.c"
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
@@ -17,11 +18,13 @@ target_compile_features(runtime_codec_test PRIVATE c_std_17 cxx_std_17)
 target_include_directories(runtime_codec_test PRIVATE
   "${REPO_ROOT}/Lib"
   "${REPO_ROOT}/Lib/runtime"
+  "${REPO_ROOT}/application/runtime/mnist"
   "${REPO_ROOT}/third_party/flatbuffers/include"
 )
 
 target_compile_definitions(runtime_codec_test PRIVATE
-  RVRT_TEST_FIXTURE_DIR="${CMAKE_CURRENT_LIST_DIR}/fixtures"
+  RVRT_TEST_ASSET_DIR="${CMAKE_CURRENT_LIST_DIR}/assets"
+  RVRT_MNIST_ASSET_DIR="${REPO_ROOT}/application/runtime/mnist/assets"
 )
 
 add_executable(runtime_control_test
@@ -32,6 +35,7 @@ add_executable(runtime_control_test
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
   "${REPO_ROOT}/Lib/runtime/session.c"
+  "${REPO_ROOT}/Lib/runtime/session_io.c"
 )
 
 target_compile_features(runtime_control_test PRIVATE c_std_17 cxx_std_17)
@@ -45,7 +49,7 @@ target_include_directories(runtime_control_test PRIVATE
 )
 
 target_compile_definitions(runtime_control_test PRIVATE
-  RVRT_TEST_FIXTURE_DIR="${CMAKE_CURRENT_LIST_DIR}/fixtures"
+  RVRT_TEST_ASSET_DIR="${CMAKE_CURRENT_LIST_DIR}/assets"
 )
 
 enable_testing()

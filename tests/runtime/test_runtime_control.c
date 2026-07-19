@@ -2,14 +2,16 @@
 #include "artifact_reader.h"
 #include "frame_codec.h"
 #include "mock_runtime_hw.h"
+#include "session_io.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef RVRT_TEST_FIXTURE_DIR
-#define RVRT_TEST_FIXTURE_DIR "fixtures"
+#ifndef RVRT_TEST_ASSET_DIR
+#define RVRT_TEST_ASSET_DIR "assets"
 #endif
 
 #define TEST_ALIGNMENT 8U
@@ -45,7 +47,7 @@ static int read_artifact(const char *name, test_artifact_t *out)
 {
     char path[TEST_PATH_BYTES];
     const int length =
-        snprintf(path, sizeof(path), "%s/%s", RVRT_TEST_FIXTURE_DIR, name);
+        snprintf(path, sizeof(path), "%s/%s", RVRT_TEST_ASSET_DIR, name);
     if ((length < 0) || ((size_t)length >= sizeof(path))) {
         return 1;
     }
@@ -119,33 +121,6 @@ static int init_session(const rvrt_artifact_t *artifact,
                           "session init");
 }
 
-static int send_timestep(rvrt_session_t *session,
-                         const rvrt_artifact_input_mapping_view_t *view,
-                         uint32_t timestep, const uint8_t *input,
-                         uint32_t input_size)
-{
-    rvrt_frame_t workspace[1];
-    rvrt_input_cursor_t cursor = {0};
-    rvrt_input_cursor_init(&cursor, timestep);
-
-    while (true) {
-        uint32_t count = 0U;
-        const rvrt_status_t status = rvrt_encode_input_chunk(
-            view, &cursor, input, input_size, workspace, 1U, &count);
-        if ((status != RVRT_STATUS_DONE) &&
-            (status != RVRT_STATUS_BUFFER_FULL)) {
-            return 1;
-        }
-        if (expect_session(rvrt_session_send_frames(session, workspace, count),
-                           RVRT_SESSION_OK, "manual send") != 0) {
-            return 1;
-        }
-        if (status == RVRT_STATUS_DONE) {
-            return 0;
-        }
-    }
-}
-
 static int verify_manual_flow(void)
 {
     test_artifact_t file = {0};
@@ -173,8 +148,13 @@ static int verify_manual_flow(void)
     }
 
     const uint8_t input[] = {3U, 4U};
-    if ((send_timestep(&session, &input_view, 0U, input, sizeof(input)) != 0) ||
-        (send_timestep(&session, &input_view, 1U, input, sizeof(input)) != 0) ||
+    rvrt_frame_t input_workspace[1];
+    if ((rvrt_session_send_input_timestep(&session, &input_view, 0U, input,
+                                          sizeof(input), input_workspace,
+                                          1U) != RVRT_SESSION_OK) ||
+        (rvrt_session_send_input_timestep(&session, &input_view, 1U, input,
+                                          sizeof(input), input_workspace,
+                                          1U) != RVRT_SESSION_OK) ||
         (mock_runtime_sent_count() != 5U)) {
         goto cleanup;
     }
@@ -223,6 +203,89 @@ static int verify_manual_flow(void)
         RVRT_SESSION_RUNTIME_ERROR) {
         goto cleanup;
     }
+
+    result = 0;
+cleanup:
+    free_artifact(&file);
+    return result;
+}
+
+static int verify_input_send_api(void)
+{
+    test_artifact_t file = {0};
+    if (read_artifact("compile_artifacts_manual.bin", &file) != 0) {
+        return 1;
+    }
+
+    int result = 1;
+    rvrt_frame_t rx_storage[1];
+    rvrt_session_t session = {0};
+    rvrt_artifact_input_mapping_view_t input_view = {0};
+    const uint8_t input[] = {3U, 4U};
+    const uint8_t zero_input[] = {0U, 0U};
+    rvrt_frame_t one_frame_workspace[1];
+    rvrt_frame_t max_workspace[RVRT_MAX_WORKSPACE_FRAMES];
+    rvrt_frame_t expected[2];
+
+    mock_runtime_reset();
+    if ((init_session(&file.artifact, &session, rx_storage, 1U) != 0) ||
+        (rvrt_artifact_get_input_mapping_view(
+             &file.artifact, 0U, 0U, &input_view) != RVRT_ARTIFACT_OK) ||
+        (rvrt_session_send_input_timestep(&session, &input_view, 7U, input,
+                                          sizeof(input), one_frame_workspace,
+                                          1U) != RVRT_SESSION_OK) ||
+        (mock_runtime_sent_count() != 2U)) {
+        goto cleanup;
+    }
+    memcpy(expected, mock_runtime_sent_frames(), sizeof(expected));
+
+    mock_runtime_reset();
+    memset(&session, 0, sizeof(session));
+    if ((init_session(&file.artifact, &session, rx_storage, 1U) != 0) ||
+        (rvrt_session_send_input_timestep(
+             &session, &input_view, 7U, input, sizeof(input), max_workspace,
+             RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_OK) ||
+        (mock_runtime_sent_count() != 2U) ||
+        (memcmp(mock_runtime_sent_frames(), expected, sizeof(expected)) != 0) ||
+        (rvrt_session_send_input_timestep(
+             &session, &input_view, 8U, zero_input, sizeof(zero_input),
+             max_workspace, RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_OK) ||
+        (mock_runtime_sent_count() != 2U)) {
+        goto cleanup;
+    }
+
+    if ((rvrt_session_send_input_timestep(&session, &input_view, 0U, input,
+                                          sizeof(input), max_workspace,
+                                          0U) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_send_input_timestep(
+             &session, &input_view, 0U, input, sizeof(input), max_workspace,
+             RVRT_MAX_WORKSPACE_FRAMES + 1U) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_send_input_timestep(
+             &session, &input_view, 0U, input, 0U, max_workspace,
+             RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_send_input_timestep(
+             &session, NULL, 0U, input, sizeof(input), max_workspace,
+             RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_send_input_timestep(
+             &session, &input_view, 0U, NULL, sizeof(input), max_workspace,
+             RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_send_input_timestep(
+             &session, &input_view, 0U, input, sizeof(input), NULL,
+             RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_send_input_timestep(
+             NULL, &input_view, 0U, input, sizeof(input), max_workspace,
+             RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_RUNTIME_ERROR)) {
+        goto cleanup;
+    }
+
+    session.phase.armed = true;
+    if (rvrt_session_send_input_timestep(
+            &session, &input_view, 0U, input, sizeof(input), max_workspace,
+            RVRT_MAX_WORKSPACE_FRAMES) != RVRT_SESSION_RUNTIME_ERROR ||
+        (mock_runtime_sent_count() != 2U)) {
+        goto cleanup;
+    }
+    session.phase.armed = false;
 
     result = 0;
 cleanup:
@@ -305,13 +368,19 @@ static int verify_data_executor(void)
         {output_buffer, sizeof(output_buffer)},
     };
     rvrt_frame_t workspace[1];
-    const rvrt_artifact_executor_config_t config = {
+    rvrt_artifact_executor_config_t config = {
         &session, buffers, 2U, workspace, 1U, NULL, 0U,
     };
     rvrt_artifact_executor_t executor = {0};
     if (rvrt_artifact_executor_init(&executor, &config) != RVRT_SESSION_OK) {
         goto cleanup;
     }
+    config.workspace_capacity = RVRT_MAX_WORKSPACE_FRAMES + 1U;
+    if (rvrt_artifact_executor_init(&executor, &config) !=
+        RVRT_SESSION_RUNTIME_ERROR) {
+        goto cleanup;
+    }
+    config.workspace_capacity = 1U;
 
     static const uint8_t expected[9] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U};
     rvrt_frame_t received[10];
@@ -323,7 +392,7 @@ static int verify_data_executor(void)
 
     const uint8_t input = 1U;
     const uint8_t *output = NULL;
-    uint32_t output_size = 0U;
+    size_t output_size = 0U;
     if ((rvrt_artifact_executor_run(&executor, &input, 1U, 10U) !=
          RVRT_SESSION_OK) ||
         (rvrt_artifact_executor_get_output(&executor, &output, &output_size) !=
@@ -435,7 +504,7 @@ static int verify_cpu_executor(void)
         data_frame(0U, input[0]), data_frame(1U, input[1]), complete_frame()};
     mock_runtime_queue_rx(received, 3U);
     const uint8_t *output = NULL;
-    uint32_t output_size = 0U;
+    size_t output_size = 0U;
     if ((rvrt_artifact_executor_run(&executor, input, sizeof(input), 10U) !=
          RVRT_SESSION_OK) ||
         (rvrt_artifact_executor_get_output(&executor, &output, &output_size) !=
@@ -455,9 +524,9 @@ cleanup:
 
 int main(void)
 {
-    if ((verify_manual_flow() != 0) || (verify_barrier_recovery() != 0) ||
-        (verify_data_executor() != 0) || (verify_voltage_executor() != 0) ||
-        (verify_cpu_executor() != 0)) {
+    if ((verify_manual_flow() != 0) || (verify_input_send_api() != 0) ||
+        (verify_barrier_recovery() != 0) || (verify_data_executor() != 0) ||
+        (verify_voltage_executor() != 0) || (verify_cpu_executor() != 0)) {
         return 1;
     }
 
