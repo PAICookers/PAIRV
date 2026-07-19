@@ -3,7 +3,7 @@
 This directory contains generated code consumed by the PAIRV runtime.
 `compile_artifacts_generated.h` is generated from the PAIBox
 `backendv2/schemas/compile_artifacts.fbs` schema and must not be edited by
-hand. Regenerate and synchronize the schema, binding, fixtures, and runtime
+hand. Regenerate and synchronize the schema, binding, test assets, and runtime
 reader together.
 
 ## FlatBuffers Runtime 字段参考

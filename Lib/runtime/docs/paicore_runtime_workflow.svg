@@ -1,0 +1,207 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1080" viewBox="0 0 1900 1080" role="img" aria-labelledby="title desc" shape-rendering="geometricPrecision">
+  <title id="title">PAIRV PAICORE runtime inference workflow</title>
+  <desc id="desc">Swimlane workflow showing artifact loading, application-timestep input, internal chunked encoding, frame transport, synchronization, IRQ receive, and full-window output decoding.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7f8fa; }
+      text { font-family: "Noto Sans CJK SC", "WenQuanYi Micro Hei", Arial, sans-serif; letter-spacing: 0; }
+      .title { font-size: 30px; font-weight: 700; fill: #18212f; }
+      .subtitle { font-size: 16px; font-weight: 400; fill: #556173; }
+      .lane-title { font-size: 17px; font-weight: 700; fill: #263244; }
+      .box-title { font-size: 16px; font-weight: 700; fill: #17212e; }
+      .box-text { font-size: 14px; font-weight: 400; fill: #425066; }
+      .api { font-size: 13px; font-weight: 600; fill: #233247; }
+      .small { font-size: 12px; font-weight: 400; fill: #59677a; }
+      .label { font-size: 12px; font-weight: 600; fill: #334155; }
+      .loop-label { fill: #f7f8fa; stroke: #8793a3; stroke-width: 1; rx: 5; }
+      .lane { stroke: #d8dee8; stroke-width: 1; }
+      .box { stroke-width: 1.5; rx: 7; }
+      .app { fill: #e8f1ff; stroke: #4b78b8; }
+      .codec { fill: #e8f7ef; stroke: #3b8461; }
+      .session { fill: #fff3dd; stroke: #b57928; }
+      .core { fill: #f2eafb; stroke: #7650a5; }
+      .event { fill: #fff; stroke: #7a8798; stroke-dasharray: 5 4; }
+      .semantic-app { fill: #dbeafe; stroke: #4b78b8; stroke-width: 1; rx: 5; }
+      .semantic-core { fill: #ede9fe; stroke: #7650a5; stroke-width: 1; rx: 5; }
+      .internal-boundary { fill: none; stroke: #3b8461; stroke-width: 1.4; stroke-dasharray: 6 4; rx: 8; }
+      .barrier-boundary { fill: none; stroke: #b57928; stroke-width: 1.4; stroke-dasharray: 6 4; rx: 8; }
+      .arrow { fill: none; stroke: #3c4858; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .return { fill: none; stroke: #59677a; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 7 5; marker-end: url(#arrow-muted); }
+      .reuse { fill: none; stroke: #39785a; stroke-width: 2; marker-end: url(#arrow-green); }
+      .divider { stroke: #cbd3df; stroke-width: 1; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3c4858"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#59677a"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#39785a"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1900" height="1080"/>
+  <text class="title" x="56" y="54">PAIRV Runtime 控制 PAICORE 推理的主要工作流程</text>
+  <text class="subtitle" x="56" y="83">应用只处理 application timestep 与自有缓冲区；cursor、分块发送和同步屏障由 Runtime 管理</text>
+
+  <!-- Swimlanes -->
+  <rect class="lane app" x="38" y="112" width="1824" height="130" opacity="0.32"/>
+  <rect class="lane codec" x="38" y="242" width="1824" height="150" opacity="0.32"/>
+  <rect class="lane session" x="38" y="392" width="1824" height="170" opacity="0.32"/>
+  <rect class="lane core" x="38" y="562" width="1824" height="120" opacity="0.32"/>
+
+  <text class="lane-title" x="58" y="142">应用层</text>
+  <text class="small" x="58" y="163">策略与缓冲区所有者</text>
+  <text class="lane-title" x="58" y="272">工件与编解码</text>
+  <text class="small" x="58" y="293">纯元数据与帧转换</text>
+  <text class="lane-title" x="58" y="422">会话层</text>
+  <text class="small" x="58" y="443">NoC / IRQ / 屏障</text>
+  <text class="lane-title" x="58" y="592">PAICORE</text>
+  <text class="small" x="58" y="613">配置、输入、计算、输出</text>
+
+  <!-- The two labels distinguish user-facing application time from hardware time. -->
+  <rect class="semantic-app" x="990" y="118" width="270" height="24"/>
+  <text class="label" x="1005" y="134">应用时间步 t_app（用户视角）</text>
+  <rect class="semantic-core" x="1330" y="400" width="230" height="24"/>
+  <text class="label" x="1345" y="416">实际推进 sync_steps（Runtime）</text>
+
+  <!-- Chunking and transport are one opaque implementation detail to the app. -->
+  <rect class="internal-boundary" x="975" y="268" width="300" height="272"/>
+  <text class="small" x="990" y="280">Runtime 内部：分块编码与发送（应用不可见）</text>
+
+  <!-- Main flow -->
+  <rect class="box app" x="210" y="150" width="200" height="68"/>
+  <text class="box-title" x="230" y="177">加载运行工件</text>
+  <text class="api" x="230" y="201">rvrt_artifact_read()</text>
+
+  <rect class="box codec" x="210" y="301" width="200" height="68"/>
+  <text class="box-title" x="230" y="328">读取输入输出映射</text>
+  <text class="api" x="230" y="352">rvrt_artifact_get_*()</text>
+
+  <rect class="box session" x="470" y="438" width="200" height="96"/>
+  <text class="box-title" x="490" y="465">建立硬件会话</text>
+  <text class="api" x="490" y="489">rvrt_session_init()</text>
+  <text class="small" x="490" y="513">绑定 thread / RX / IRQ</text>
+
+  <rect class="box session" x="730" y="438" width="210" height="108"/>
+  <text class="box-title" x="750" y="465">加载静态配置</text>
+  <text class="api" x="750" y="489"><tspan x="750">rvrt_session_</tspan><tspan x="750" dy="16">load_config()</tspan></text>
+  <text class="small" x="750" y="529">通常首次推理前一次</text>
+
+  <rect class="box core" x="740" y="590" width="190" height="64"/>
+  <text class="box-title" x="760" y="617">配置 PAICORE</text>
+  <text class="small" x="760" y="640">config frames</text>
+
+  <rect class="box app" x="990" y="150" width="270" height="68"/>
+  <text class="box-title" x="1010" y="173">发送每个时间步输入</text>
+  <text class="api" x="1010" y="194"><tspan x="1010">rvrt_session_send_</tspan><tspan x="1010" dy="16">input_timestep()</tspan></text>
+
+  <rect class="box codec" x="990" y="286" width="270" height="88"/>
+  <text class="box-title" x="1010" y="309">分块编码输入</text>
+  <text class="api" x="1010" y="331"><tspan x="1010">rvrt_encode_input_</tspan><tspan x="1010" dy="16">chunk()</tspan></text>
+  <text class="small" x="1010" y="365">cursor 对应用透明</text>
+
+  <rect class="box session" x="990" y="445" width="270" height="82"/>
+  <text class="box-title" x="1010" y="468">发送输入分块</text>
+  <text class="api" x="1010" y="490"><tspan x="1010">rvrt_session_send_</tspan><tspan x="1010" dy="16">frames()</tspan></text>
+
+  <rect class="box core" x="990" y="590" width="270" height="64"/>
+  <text class="box-title" x="1010" y="617">写入输入工作帧</text>
+  <text class="small" x="1010" y="640">可累计多个时间步</text>
+
+  <rect class="box session" x="1330" y="438" width="230" height="108"/>
+  <text class="box-title" x="1350" y="465">执行同步屏障</text>
+  <text class="api" x="1350" y="489"><tspan x="1350">rvrt_session_</tspan><tspan x="1350" dy="16">sync_wait()</tspan></text>
+  <text class="small" x="1350" y="529">sync_steps + timeout_ms</text>
+
+  <rect class="box core" x="1330" y="590" width="230" height="64"/>
+  <text class="box-title" x="1350" y="617">计算并返回输出</text>
+  <text class="small" x="1350" y="640">工作帧 → 完成帧</text>
+
+  <rect class="box codec" x="1640" y="286" width="220" height="88"/>
+  <text class="box-title" x="1660" y="309">全窗口解码</text>
+  <text class="api" x="1660" y="331"><tspan x="1660">rvrt_decode_output_</tspan><tspan x="1660" dy="16">frames()</tspan></text>
+  <text class="small" x="1660" y="365">转为应用时间步输出</text>
+
+  <rect class="box app" x="1640" y="143" width="220" height="82"/>
+  <text class="box-title" x="1660" y="168">应用输出矩阵</text>
+  <text class="small" x="1660" y="190"><tspan x="1660">output[application_</tspan><tspan x="1660" dy="14">timestep][element]</tspan></text>
+  <text class="small" x="1660" y="216">每行对应一个应用时间步</text>
+
+  <!-- Cross-lane main arrows -->
+  <path class="arrow" d="M310 218 L310 301"/>
+  <path class="arrow" d="M410 335 H435 V486 H470"/>
+  <path class="arrow" d="M670 486 H730"/>
+  <path class="arrow" d="M835 546 L835 590"/>
+  <path class="arrow" d="M940 470 H965 V184 H990"/>
+  <path class="arrow" d="M1125 218 V286"/>
+  <path class="arrow" d="M1125 374 V445"/>
+  <path class="arrow" d="M1125 527 V590"/>
+  <path class="arrow" d="M1260 622 H1295 V486 H1330"/>
+  <path class="arrow" d="M1445 546 L1445 590"/>
+  <path class="return" d="M1560 622 H1615 V330 H1640"/>
+  <path class="arrow" d="M1750 286 L1750 225"/>
+
+  <!-- Chunk/timestep loop -->
+  <path class="return" d="M990 486 H980 V330 H990"/>
+  <rect class="loop-label" x="870" y="397" width="96" height="28"/>
+  <text class="label" x="918" y="416" text-anchor="middle">BUFFER_FULL</text>
+  <path class="return" d="M1260 486 H1280 V184 H1260"/>
+  <rect class="loop-label" x="1270" y="244" width="96" height="28"/>
+  <text class="label" x="1318" y="263" text-anchor="middle">下一个时间步</text>
+
+  <!-- Lower details -->
+  <text class="title" x="56" y="735" style="font-size:22px">一次同步屏障的局部流程</text>
+  <line class="divider" x1="56" y1="754" x2="1844" y2="754"/>
+
+  <!-- Only the five runtime steps belong to one sync_wait operation. -->
+  <rect class="barrier-boundary" x="56" y="772" width="1360" height="115"/>
+  <text class="small" x="72" y="787">一次 sync_wait：Runtime 管理的局部操作</text>
+
+  <rect class="box session" x="76" y="800" width="190" height="76"/>
+  <text class="box-title" x="96" y="828">1. 清空并开启 IRQ</text>
+  <text class="small" x="96" y="854">重置接收，进入就绪状态</text>
+
+  <rect class="box session" x="360" y="800" width="190" height="76"/>
+  <text class="box-title" x="380" y="828">2. 发送同步帧</text>
+  <text class="small" x="380" y="854">携带需推进的时间步</text>
+
+  <rect class="box core" x="644" y="800" width="190" height="76"/>
+  <text class="box-title" x="664" y="828">3. 推进 PAICORE 计算</text>
+  <text class="small" x="664" y="854">计算并产生输出帧</text>
+
+  <rect class="box session" x="928" y="800" width="190" height="76"/>
+  <text class="box-title" x="948" y="828">4. 中断内持续接收</text>
+  <text class="small" x="948" y="854">直到完成帧或溢出</text>
+
+  <rect class="box session" x="1212" y="800" width="190" height="76"/>
+  <text class="box-title" x="1232" y="828">5. 退出中断，结束接收</text>
+  <text class="small" x="1232" y="854">返回原始接收帧</text>
+
+  <path class="arrow" d="M266 838 L360 838"/>
+  <path class="arrow" d="M550 838 L644 838"/>
+  <path class="arrow" d="M834 838 L928 838"/>
+  <path class="arrow" d="M1118 838 L1212 838"/>
+
+  <rect class="box app" x="1540" y="800" width="306" height="104"/>
+  <text class="box-title" x="1560" y="828">手动应用</text>
+  <text class="small" x="1560" y="854">应用时间步：t_app</text>
+  <text class="small" x="1560" y="878">调用 sync_wait 推进 sync_steps 步</text>
+  <path class="return" d="M1540 838 H1416"/>
+  <text class="small" x="1450" y="830">应用调用</text>
+
+  <!-- Parameter flow strip -->
+  <rect class="event" x="76" y="918" width="1080" height="104"/>
+  <text class="box-title" x="96" y="946">关键参数沿流程传递</text>
+  <text class="api" x="96" y="977">thread_index</text>
+  <text class="small" x="214" y="977">→ root core / mapping namespace</text>
+  <text class="api" x="510" y="977">timestep + target_lcn</text>
+  <text class="small" x="700" y="977">→ work-frame 时间地址</text>
+  <text class="api" x="96" y="1004">rx_capacity</text>
+  <text class="small" x="214" y="1004">→ IRQ 可接收的最大原始帧数</text>
+  <text class="api" x="510" y="1004">sync_steps</text>
+  <text class="small" x="610" y="1004">→ 同步帧低 24-bit payload</text>
+
+  <text class="small" x="56" y="1055">当前约束：单 active session；全窗口 decoder 支持 STREAM DATA；模型后处理由应用实现。</text>
+</svg>
