@@ -210,6 +210,97 @@ cleanup:
     return result;
 }
 
+static int verify_model_reset(void)
+{
+    test_artifact_t file = {0};
+    if (read_artifact("compile_artifacts_manual.bin", &file) != 0) {
+        return 1;
+    }
+
+    int result = 1;
+    rvrt_frame_t rx_storage[2];
+    rvrt_session_t session = {0};
+    rvrt_frame_t expected_init = {0};
+    rvrt_frame_t expected_sync = {0};
+    const rvrt_frame_t complete = complete_frame();
+
+    mock_runtime_reset();
+    if ((init_session(&file.artifact, &session, rx_storage, 2U) != 0) ||
+        (rvrt_session_load_config(&session) != RVRT_SESSION_OK) ||
+        (rvrt_build_init_frame(&file.artifact, 0U, &expected_init) !=
+         RVRT_STATUS_OK) ||
+        (rvrt_build_sync_frame(&file.artifact, 0U, 2U, &expected_sync) !=
+         RVRT_STATUS_OK)) {
+        goto cleanup;
+    }
+
+    const uint32_t sent_before_reset = mock_runtime_sent_count();
+    mock_runtime_queue_rx(&complete, 1U);
+    if ((expect_session(rvrt_session_reset_model(&session, 10U),
+                        RVRT_SESSION_OK, "model reset") != 0) ||
+        (mock_runtime_sent_count() != sent_before_reset + 1U) ||
+        (memcmp(&mock_runtime_sent_frames()[sent_before_reset], &expected_init,
+                sizeof(expected_init)) != 0) ||
+        session.phase.armed) {
+        goto cleanup;
+    }
+
+    mock_runtime_queue_rx(&complete, 1U);
+    const rvrt_frame_t *raw_frames = NULL;
+    uint32_t raw_count = 0U;
+    if ((expect_session(rvrt_session_sync_wait(&session, 2U, 10U,
+                                                &raw_frames, &raw_count),
+                        RVRT_SESSION_OK, "sync after reset") != 0) ||
+        (raw_count != 1U) ||
+        (memcmp(&mock_runtime_sent_frames()[sent_before_reset + 1U],
+                &expected_sync,
+                sizeof(expected_sync)) != 0)) {
+        goto cleanup;
+    }
+
+    mock_runtime_queue_rx(NULL, 0U);
+    if (expect_session(rvrt_session_reset_model(&session, 10U),
+                       RVRT_SESSION_HARDWARE_ERROR,
+                       "reset hardware error") != 0) {
+        goto cleanup;
+    }
+
+    mock_runtime_set_auto_irq(false);
+    if (expect_session(rvrt_session_reset_model(&session, 1U),
+                       RVRT_SESSION_TIMEOUT, "reset timeout") != 0) {
+        goto cleanup;
+    }
+    mock_runtime_set_auto_irq(true);
+
+    rvrt_frame_t overflow_storage[1];
+    rvrt_session_t overflow_session = {0};
+    const rvrt_frame_t overflow_rx[] = {
+        data_frame(0U, 0x11U), complete_frame()};
+    if (init_session(&file.artifact, &overflow_session, overflow_storage, 1U) !=
+        0) {
+        goto cleanup;
+    }
+    mock_runtime_queue_rx(overflow_rx, 2U);
+    if (expect_session(rvrt_session_reset_model(&overflow_session, 10U),
+                       RVRT_SESSION_OVERFLOW, "reset overflow") != 0) {
+        goto cleanup;
+    }
+
+    overflow_session.phase.armed = true;
+    if ((rvrt_session_reset_model(NULL, 1U) != RVRT_SESSION_RUNTIME_ERROR) ||
+        (rvrt_session_reset_model(&overflow_session, 1U) !=
+         RVRT_SESSION_RUNTIME_ERROR)) {
+        goto cleanup;
+    }
+    overflow_session.phase.armed = false;
+
+    result = 0;
+cleanup:
+    session.phase.armed = false;
+    free_artifact(&file);
+    return result;
+}
+
 static int verify_input_send_api(void)
 {
     test_artifact_t file = {0};
@@ -524,7 +615,8 @@ cleanup:
 
 int main(void)
 {
-    if ((verify_manual_flow() != 0) || (verify_input_send_api() != 0) ||
+    if ((verify_manual_flow() != 0) || (verify_model_reset() != 0) ||
+        (verify_input_send_api() != 0) ||
         (verify_barrier_recovery() != 0) || (verify_data_executor() != 0) ||
         (verify_voltage_executor() != 0) || (verify_cpu_executor() != 0)) {
         return 1;

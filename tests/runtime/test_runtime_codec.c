@@ -519,17 +519,22 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
 static int verify_mnist_sequence(void)
 {
     uint8_t input[MNIST_INPUT_TIMESTEPS * MNIST_INPUT_BYTES];
-    mnist_build_input(input);
-    for (uint32_t timestep = 0U; timestep < MNIST_INPUT_TIMESTEPS; ++timestep) {
-        uint32_t active_count = 0U;
-        for (uint32_t elem = 0U; elem < MNIST_INPUT_BYTES; ++elem) {
-            active_count += input[timestep * MNIST_INPUT_BYTES + elem];
-        }
-        if (active_count != MNIST_INPUT_ACTIVE_PIXELS) {
-            fprintf(stderr, "MNIST input timestep=%u active=%u expected=%u\n",
-                    (unsigned)timestep, (unsigned)active_count,
-                    (unsigned)MNIST_INPUT_ACTIVE_PIXELS);
-            return 1;
+    for (uint32_t sample = 0U; sample < MNIST_SAMPLE_COUNT; ++sample) {
+        mnist_build_input(sample, input);
+        for (uint32_t timestep = 0U; timestep < MNIST_INPUT_TIMESTEPS;
+             ++timestep) {
+            uint32_t active_count = 0U;
+            for (uint32_t elem = 0U; elem < MNIST_INPUT_BYTES; ++elem) {
+                active_count += input[timestep * MNIST_INPUT_BYTES + elem];
+            }
+            if (active_count != mnist_active_pixel_counts[sample]) {
+                fprintf(stderr,
+                        "MNIST sample=%u timestep=%u active=%u expected=%u\n",
+                        (unsigned)sample, (unsigned)timestep,
+                        (unsigned)active_count,
+                        (unsigned)mnist_active_pixel_counts[sample]);
+                return 1;
+            }
         }
     }
 
@@ -559,62 +564,69 @@ static int verify_mnist_sequence(void)
         (runtime.sync_steps != 10U) ||
         (runtime.decode_mode != RVRT_DECODE_MODE_STREAM) ||
         (view.kind != RVRT_OUTPUT_DATA) || (view.element_count != 10U) ||
-        (sizeof(mnist_expected_output) !=
+        (sizeof(mnist_expected_output[0]) !=
          runtime.timesteps * view.element_count)) {
         fprintf(stderr, "MNIST artifact contract mismatch\n");
         goto cleanup;
     }
 
-    rvrt_frame_t frames[82] = {{0U, 0U}};
-    uint32_t frame_count = 0U;
-    for (uint32_t axon_bit_idx = 0U; axon_bit_idx < view.entry_count;
-         ++axon_bit_idx) {
-        rvrt_artifact_output_entry_t entry = {0};
-        bool found = false;
-        if ((expect_artifact_status(rvrt_artifact_output_mapping_find(
-                                        &view, axon_bit_idx, &entry, &found),
-                                    "MNIST output entry") != 0) ||
-            !found) {
-            goto cleanup;
-        }
-        for (uint32_t timestep = 0U; timestep < runtime.timesteps; ++timestep) {
-            const uint8_t value =
-                mnist_expected_output[timestep * view.element_count +
-                                      entry.elem_idx];
-            if (value != 0U) {
-                frames[frame_count++] = work_frame_at_timestep(
-                    TEST_WORK_DATA_HIGH, timestep, axon_bit_idx, value);
+    for (uint32_t sample = 0U; sample < MNIST_SAMPLE_COUNT; ++sample) {
+        rvrt_frame_t frames[82] = {{0U, 0U}};
+        uint32_t frame_count = 0U;
+        for (uint32_t axon_bit_idx = 0U; axon_bit_idx < view.entry_count;
+             ++axon_bit_idx) {
+            rvrt_artifact_output_entry_t entry = {0};
+            bool found = false;
+            if ((expect_artifact_status(rvrt_artifact_output_mapping_find(
+                                            &view, axon_bit_idx, &entry,
+                                            &found),
+                                        "MNIST output entry") != 0) ||
+                !found) {
+                goto cleanup;
+            }
+            for (uint32_t timestep = 0U; timestep < runtime.timesteps;
+                 ++timestep) {
+                const uint8_t value = mnist_expected_output[sample][
+                    timestep * view.element_count + entry.elem_idx];
+                if (value != 0U) {
+                    frames[frame_count++] = work_frame_at_timestep(
+                        TEST_WORK_DATA_HIGH, timestep, axon_bit_idx, value);
+                }
             }
         }
-    }
-    frames[frame_count++] = (rvrt_frame_t){0xE0000000U, 0U};
+        frames[frame_count++] = (rvrt_frame_t){0xE0000000U, 0U};
 
-    uint8_t output[80] = {0};
-    if ((expect_status(rvrt_decode_output_frames(&view, &runtime, frames,
-                                                 frame_count, output,
-                                                 sizeof(output)),
-                       RVRT_STATUS_OK, "MNIST sequence decode") != 0) ||
-        (memcmp(output, mnist_expected_output, sizeof(output)) != 0)) {
-        fprintf(stderr, "MNIST 8x10 sequence mismatch\n");
-        goto cleanup;
-    }
+        uint8_t output[80] = {0};
+        if ((expect_status(rvrt_decode_output_frames(&view, &runtime, frames,
+                                                     frame_count, output,
+                                                     sizeof(output)),
+                           RVRT_STATUS_OK, "MNIST sequence decode") != 0) ||
+            (memcmp(output, mnist_expected_output[sample], sizeof(output)) !=
+             0)) {
+            fprintf(stderr, "MNIST sample=%u 8x10 sequence mismatch\n",
+                    (unsigned)sample);
+            goto cleanup;
+        }
 
-    uint32_t sums[10] = {0};
-    for (uint32_t timestep = 0U; timestep < runtime.timesteps; ++timestep) {
-        for (uint32_t elem = 0U; elem < view.element_count; ++elem) {
-            sums[elem] += output[timestep * view.element_count + elem];
+        uint32_t sums[10] = {0};
+        for (uint32_t timestep = 0U; timestep < runtime.timesteps;
+             ++timestep) {
+            for (uint32_t elem = 0U; elem < view.element_count; ++elem) {
+                sums[elem] += output[timestep * view.element_count + elem];
+            }
         }
-    }
-    uint32_t prediction = 0U;
-    for (uint32_t elem = 1U; elem < view.element_count; ++elem) {
-        if (sums[elem] > sums[prediction]) {
-            prediction = elem;
+        uint32_t prediction = 0U;
+        for (uint32_t elem = 1U; elem < view.element_count; ++elem) {
+            if (sums[elem] > sums[prediction]) {
+                prediction = elem;
+            }
         }
-    }
-    if (prediction != 7U) {
-        fprintf(stderr, "MNIST prediction=%u expected=7\n",
-                (unsigned)prediction);
-        goto cleanup;
+        if (prediction != mnist_expected_labels[sample]) {
+            fprintf(stderr, "MNIST sample=%u prediction=%u expected=%u\n",
+                    (unsigned)sample, (unsigned)prediction,
+                    (unsigned)mnist_expected_labels[sample]);
+            goto cleanup;
+        }
     }
     result = 0;
 
