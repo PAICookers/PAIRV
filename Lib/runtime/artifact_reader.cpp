@@ -383,6 +383,12 @@ rvrt_artifact_status_t mapping_dtype_bits(fbs::DataType dtype, uint32_t *bits)
     }
 }
 
+/**
+ * @brief Validate input fields consumed by the work-frame encoder.
+ *
+ * Each entry must address an element in the declared shape and use a payload
+ * width that the C codec can represent.
+ */
 rvrt_artifact_status_t
 validate_input_mapping(const fbs::InputTensorMapping *mapping)
 {
@@ -416,6 +422,12 @@ validate_input_mapping(const fbs::InputTensorMapping *mapping)
     return RVRT_ARTIFACT_OK;
 }
 
+/**
+ * @brief Validate output lookup keys and the supported DATA/VOLTAGE contract.
+ *
+ * Output entries must remain strictly ordered by axon-bit key because the
+ * runtime performs FlatBuffers key lookup on that ordering.
+ */
 rvrt_artifact_status_t
 validate_output_mapping(const fbs::OutputTensorMapping *mapping)
 {
@@ -459,7 +471,12 @@ validate_output_mapping(const fbs::OutputTensorMapping *mapping)
     return RVRT_ARTIFACT_OK;
 }
 
-/** @brief Validate mapping fields required by the C frame codec. */
+/**
+ * @brief Validate every thread's mappings before exposing borrowed views.
+ *
+ * This is the artifact-reader boundary that guarantees codec address and dtype
+ * assumptions; public mapping accessors do not repeat these structural checks.
+ */
 rvrt_artifact_status_t validate_io_mapping(const fbs::IOMapping *io_mapping)
 {
     if ((io_mapping == nullptr) || (io_mapping->threads() == nullptr)) {
@@ -1188,8 +1205,15 @@ rvrt_artifact_status_t rvrt_artifact_get_output_mapping_view(
         return RVRT_ARTIFACT_MISSING_FIELD;
     }
 
+    uint32_t element_count = 0U;
+    status = copy_shape(output->shape(), nullptr, nullptr, &element_count);
+    if (status != RVRT_ARTIFACT_OK) {
+        return status;
+    }
+
     view->entries = entries;
     view->entry_count = static_cast<uint32_t>(entries->size());
+    view->element_count = element_count;
     view->dtype = static_cast<uint32_t>(output->dtype());
     view->kind = static_cast<uint32_t>(output->kind());
     view->target_lcn = thread->output_mappings()->target_lcn();

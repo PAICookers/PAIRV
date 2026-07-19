@@ -1,6 +1,7 @@
 #ifndef RVRT_ARTIFACT_EXECUTOR_H
 #define RVRT_ARTIFACT_EXECUTOR_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "session.h"
@@ -12,7 +13,7 @@ extern "C" {
 /** @brief Caller-owned storage for one ExecutionPlan runtime buffer. */
 typedef struct rvrt_executor_buffer_s {
     uint8_t *data;
-    uint32_t capacity;
+    size_t capacity;
 } rvrt_executor_buffer_t;
 
 /** @brief Resources used by the generated artifact schedule interpreter. */
@@ -36,9 +37,9 @@ typedef struct rvrt_artifact_executor_s {
     rvrt_voltage_decode_state_t *voltage_state;
     uint32_t voltage_state_capacity;
     uint32_t input_ref;
-    uint32_t input_bytes;
+    size_t input_bytes;
     uint32_t output_ref;
-    uint32_t output_bytes;
+    size_t output_bytes;
 } rvrt_artifact_executor_t;
 
 /** @brief Validate and bind a complete generated ExecutionPlan. */
@@ -49,13 +50,13 @@ rvrt_artifact_executor_init(rvrt_artifact_executor_t *executor,
 /** @brief Execute one input through every ordered PAICORE/CPU stage. */
 rvrt_session_status_t
 rvrt_artifact_executor_run(rvrt_artifact_executor_t *executor,
-                           const uint8_t *input, uint32_t input_size,
+                           const uint8_t *input, size_t input_size,
                            uint32_t timeout_ms);
 
 /** @brief Borrow the final generated-plan output buffer. */
 rvrt_session_status_t
 rvrt_artifact_executor_get_output(const rvrt_artifact_executor_t *executor,
-                                  const uint8_t **data, uint32_t *size);
+                                  const uint8_t **data, size_t *size);
 
 #ifdef __cplusplus
 }

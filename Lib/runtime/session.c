@@ -9,6 +9,12 @@ static rvrt_session_t *g_active_session;
 
 void paicore_noc_handler(void);
 
+/**
+ * @brief Register the NoC ISR and make session the sole active receiver.
+ *
+ * The ISR dispatches through g_active_session, so a second initialized session
+ * replaces the previous receiver and is not a supported concurrent use case.
+ */
 static rvrt_session_status_t register_irq(rvrt_session_t *session)
 {
     noc_irq_disable();
@@ -24,11 +30,6 @@ static rvrt_session_status_t register_irq(rvrt_session_t *session)
     return RVRT_SESSION_OK;
 }
 
-static void clear_stats(rvrt_session_stats_t *stats)
-{
-    *stats = (rvrt_session_stats_t){0};
-}
-
 static void clear_phase(rvrt_session_phase_t *phase)
 {
     phase->armed = false;
@@ -40,6 +41,12 @@ static void clear_phase(rvrt_session_phase_t *phase)
     phase->complete_count = 0U;
 }
 
+/**
+ * @brief Reset and publish an IRQ receive phase before a sync frame is sent.
+ *
+ * The write barrier makes the cleared phase state visible before armed allows
+ * the ISR to append received frames.
+ */
 static void arm_phase(rvrt_session_t *session)
 {
     rvrt_session_phase_t *const phase = &session->phase;
@@ -52,6 +59,12 @@ static void arm_phase(rvrt_session_t *session)
     noc_irq_enable();
 }
 
+/**
+ * @brief Wait for the ISR to finish the armed phase, then disarm it.
+ *
+ * On timeout this function disables NoC IRQ delivery and marks the phase as a
+ * hardware error, so callers must start a fresh synchronization phase.
+ */
 static rvrt_session_status_t wait_phase(rvrt_session_t *session,
                                         uint32_t timeout_ms,
                                         rv_counter_t *cycles_out)
@@ -113,7 +126,7 @@ rvrt_session_status_t rvrt_session_init(rvrt_session_t *session,
     session->rx_frames = config->rx_frames;
     session->rx_capacity = config->rx_capacity;
 #if RVRT_SESSION_ENABLE_STATS
-    clear_stats(&session->stats);
+    session->stats = (rvrt_session_stats_t){0};
 #endif
     clear_phase(&session->phase);
     return register_irq(session);
@@ -289,7 +302,7 @@ rvrt_session_status_t rvrt_session_get_stats(const rvrt_session_t *session,
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
-    clear_stats(stats);
+    *stats = (rvrt_session_stats_t){0};
 #if RVRT_SESSION_ENABLE_STATS
     *stats = session->stats;
 #endif

@@ -53,6 +53,11 @@ static uint32_t rvrt_packet_read_u32_le(const uint8_t *src)
            (((uint32_t)src[2]) << 16U) | (((uint32_t)src[3]) << 24U);
 }
 
+/**
+ * @brief Write the first 12 serialized header bytes, excluding the CRC field.
+ *
+ * The same prefix is emitted in a packet header and fed into compute_crc().
+ */
 static void build_header_prefix(uint8_t *dst, uint8_t command, uint8_t status,
                                 uint32_t payload_len)
 {
@@ -67,6 +72,9 @@ static void build_header_prefix(uint8_t *dst, uint8_t command, uint8_t status,
     rvrt_packet_write_u32_le(dst + 8U, payload_len);
 }
 
+/**
+ * @brief Calculate CRC-32 over the serialized header prefix and payload.
+ */
 static uint32_t compute_crc(uint8_t command, uint8_t status,
                             const uint8_t *payload, uint32_t payload_len)
 {
