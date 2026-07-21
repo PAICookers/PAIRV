@@ -111,7 +111,7 @@ static int check_fc3_real_size(void)
 static int check_dequantize_action(void)
 {
     int finite = 1;
-    rv_dequantize_s32(g_fc3_acc, g_action, SNN_REAL_FC3_OUT,
+    rv_dequantize_s32(g_fc3_acc, g_action, 1U, SNN_REAL_FC3_OUT,
                       SNN_FC3_OUTPUT_SCALE);
 
     const float max_d = max_abs_diff(g_action, SNN_ACTION_REF, SNN_REAL_FC3_OUT, &finite);

@@ -25,25 +25,30 @@ extern "C" {
  *     zero-point-free quantization.
  *
  * If x or q is NULL, or n == 0, the function returns without writing.
- * In-place is not applicable because input and output element types differ.
+ * For float32 -> int8 shrinking conversion, x and q may point to the same
+ * buffer; the forward loop is safe because int8 writes cannot catch up with
+ * later unread float32 elements.
  */
 void rv_quantize_s8(const float *x, int8_t *q, size_t n, float scale);
 
 /* Per-channel int32 -> fp32 dequantization matching QuantizedLinearRuntime:
  *
- *     y[i] = (float)acc[i] * output_scale[i]
+ *     y[r * cols + c] = (float)acc[r * cols + c] * output_scale[c]
  *
  * Notes:
- *   - `acc` is the int32 accumulator / membrane value;
- *   - `output_scale` is a per-output-channel fp32 vector of length `n`;
+ *   - `acc` is the int32 accumulator / membrane value stored as rows x cols;
+ *   - `output_scale` is a per-output-channel fp32 vector of length `cols`;
+ *   - every row / timestep reuses the same `output_scale` vector;
  *   - this function does not round or clamp; it only restores fp32 values;
  *   - used for li_out.mem_int32 -> fp32 before fc3 input quantization, and
  *     for fc3.acc_int32 -> final action_float.
  *
- * If acc, y, or output_scale is NULL, or n == 0, the function returns without
- * writing.
+ * If acc, y, or output_scale is NULL, or rows/cols == 0, the function returns
+ * without writing. For int32 -> float32 same-size conversion, acc and y may
+ * point to the same buffer; the forward loop reads and writes one 4-byte slot
+ * at a time.
  */
-void rv_dequantize_s32(const int32_t *acc, float *y, size_t n,
+void rv_dequantize_s32(const int32_t *acc, float *y, size_t rows, size_t cols,
                        const float *output_scale);
 
 #ifdef __cplusplus
