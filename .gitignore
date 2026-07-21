@@ -83,3 +83,8 @@ tasks/
 AGENTS.md
 CLAUDE.md
 skills-lock.json
+
+# CMake host-test build output
+application/baremetal/snn_head/host_test/build/
+# Compiled artifact inspector tool (x86 ELF)
+tests/runtime/inspect_artifacts
