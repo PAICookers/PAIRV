@@ -10,7 +10,7 @@ extern "C" {
 /* Default epsilon, matching PyTorch nn.LayerNorm default (eps = 1e-5). */
 #define RV_LAYERNORM_DEFAULT_EPS 1e-5f
 
-/* fp32 LayerNorm over the last dimension, numerically matching
+/* fp32 LayerNorm over the last dimension, using the same formula as
  * torch.nn.LayerNorm(dim, eps, elementwise_affine=True).
  *
  * For each of `rows` independent rows of length `dim`:
@@ -18,11 +18,13 @@ extern "C" {
  *     var  = (1/dim) * sum_i (x[i] - mean)^2        // biased (divide by N)
  *     y[i] = (x[i] - mean) / sqrt(var + eps) * weight[i] + bias[i]
  *
- * Notes to stay identical to PyTorch:
+ * Numerical contract:
  *   - variance is BIASED (divides by N, not N-1);
  *   - eps is added INSIDE the sqrt (rstd = 1/sqrt(var + eps));
- *   - all math is IEEE-754 single precision (float), matching the CPU fp32
- *     datapath; no bf16 / NICE is involved.
+ *   - mean and variance use fixed four-lane IEEE-754 float reductions, which
+ *     limit accumulation-chain length while remaining efficient on RV32F;
+ *   - the formula matches PyTorch, but results are not guaranteed bit-exact
+ *     with backend-specific PyTorch reduction kernels.
  *
  * weight (gamma) and bias (beta) each have length `dim`. Passing NULL for
  * weight and/or bias selects the elementwise_affine=False behaviour for that
