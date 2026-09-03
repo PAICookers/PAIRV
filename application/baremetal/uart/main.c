@@ -19,12 +19,11 @@ int main(void)
 
         if (cmd_len > 0) {
             uart_app_process_command(cmd_buf);
-            uart_app_print_prompt();
         }
 
         /* 2. Handle any completed PAICORE receive sequence reported by the
          * shared NoC callback path. */
-        if (uart_app_service_received_data() != 0) {
+        if (uart_app_service_received_data() != 0 || cmd_len > 0) {
             uart_app_print_prompt();
         }
     }
