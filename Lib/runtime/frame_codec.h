@@ -12,24 +12,24 @@ extern "C" {
 #endif
 
 /** @brief Result of frame construction, input encoding, or output decoding. */
-typedef enum rvrt_status_e {
+typedef enum rvrt_codec_status_e {
     /** Frame was handled or intentionally ignored. */
-    RVRT_STATUS_OK = 0,
+    RVRT_CODEC_STATUS_OK = 0,
     /** Input cursor reached the final mapping entry. */
-    RVRT_STATUS_DONE = 1,
+    RVRT_CODEC_STATUS_DONE = 1,
     /** Caller workspace needs another chunk. */
-    RVRT_STATUS_BUFFER_FULL = 2,
+    RVRT_CODEC_STATUS_BUFFER_FULL = 2,
     /** A required pointer was NULL. */
-    RVRT_STATUS_NULL_ARGUMENT = -1,
+    RVRT_CODEC_STATUS_NULL_ARGUMENT = -1,
     /** Artifact mapping lookup failed. */
-    RVRT_STATUS_ARTIFACT_ERROR = -2,
+    RVRT_CODEC_STATUS_ARTIFACT_ERROR = -2,
     /** Index, capacity, or size is invalid. */
-    RVRT_STATUS_OUT_OF_RANGE = -3,
+    RVRT_CODEC_STATUS_OUT_OF_RANGE = -3,
     /** Argument or protocol value is invalid. */
-    RVRT_STATUS_BAD_VALUE = -4,
+    RVRT_CODEC_STATUS_BAD_VALUE = -4,
     /** Dtype, output kind, or mode is unsupported. */
-    RVRT_STATUS_UNSUPPORTED = -5,
-} rvrt_status_t;
+    RVRT_CODEC_STATUS_UNSUPPORTED = -5,
+} rvrt_codec_status_t;
 
 /** @brief One logical 64-bit NoC frame split for the FIFO interface. */
 typedef struct rvrt_frame_s {
@@ -104,27 +104,31 @@ typedef struct rvrt_input_cursor_s {
  * @param artifact Verified artifact providing the thread root address.
  * @param thread_index Zero-based artifact thread index.
  * @param frame Receives the logical high/low frame words; must not be NULL.
- * @return RVRT_STATUS_OK on success; otherwise an argument or artifact status.
+ * @return RVRT_CODEC_STATUS_OK on success; otherwise an argument or artifact
+ * status.
  */
-rvrt_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
-                                    uint32_t thread_index, rvrt_frame_t *frame);
+rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
+                                          uint32_t thread_index,
+                                          rvrt_frame_t *frame);
 
 /**
- * @brief Build a synchronization control frame with an explicit step count.
+ * @brief Build a synchronization control frame with an exact raw payload.
  *
- * Standard session use should call rvrt_session_sync_wait() with the artifact
- * sync_steps rather than transmit this frame manually.
+ * Standard session use should call either a session raw-payload operation or a
+ * session PAICORE-timeline operation rather than transmit this frame
+ * manually.
  * @param artifact Verified artifact providing the thread root address.
  * @param thread_index Zero-based artifact thread index.
- * @param sync_steps Synchronization payload; must fit in the control-frame
+ * @param sync_payload Synchronization payload; must fit in the control-frame
  *                   24-bit field.
  * @param frame Receives the logical high/low frame words; must not be NULL.
- * @return RVRT_STATUS_OK on success; RVRT_STATUS_BAD_VALUE when sync_steps
- *         exceeds the payload width; or an argument/artifact status.
+ * @return RVRT_CODEC_STATUS_OK on success; RVRT_CODEC_STATUS_BAD_VALUE when
+ * sync_payload exceeds the payload width; or an argument/artifact status.
  */
-rvrt_status_t rvrt_build_sync_frame(const rvrt_artifact_t *artifact,
-                                    uint32_t thread_index, uint32_t sync_steps,
-                                    rvrt_frame_t *frame);
+rvrt_codec_status_t
+rvrt_build_sync_payload_frame(const rvrt_artifact_t *artifact,
+                              uint32_t thread_index, uint32_t sync_payload,
+                              rvrt_frame_t *frame);
 
 /**
  * @brief Reset a cursor before encoding one application timestep.
@@ -142,17 +146,17 @@ void rvrt_input_cursor_init(rvrt_input_cursor_t *cursor, uint32_t timestep);
  * @param view Borrowed input mapping from artifact_reader.
  * @param cursor In/out state initialized for the intended application timestep.
  * @param input Contiguous logical input bytes addressed by mapping elem_idx.
- * @param input_size Number of readable bytes in input.
+ * @param input_size Number of readable bytes in input, in bytes.
  * @param frames Caller workspace for encoded logical frames.
- * @param frame_capacity Number of rvrt_frame_t entries in frames; must be
- * nonzero.
+ * @param frame_capacity Number of rvrt_frame_t entries in frames, not bytes;
+ *        must be nonzero.
  * @param frame_count Receives the number of frames written; must not be NULL.
- * @return RVRT_STATUS_DONE when all entries were visited;
- *         RVRT_STATUS_BUFFER_FULL when the caller must send the current chunk
- *         and call again; or an argument, mapping, range, dtype, or payload
+ * @return RVRT_CODEC_STATUS_DONE when all entries were visited;
+ *         RVRT_CODEC_STATUS_BUFFER_FULL when the caller must send the current
+ * chunk and call again; or an argument, mapping, range, dtype, or payload
  *         status. frame_count is zeroed before encoding begins.
  */
-rvrt_status_t
+rvrt_codec_status_t
 rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
                         rvrt_input_cursor_t *cursor, const uint8_t *input,
                         size_t input_size, rvrt_frame_t *frames,
@@ -167,13 +171,13 @@ rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
  * @param view Borrowed output mapping used to identify the frame address.
  * @param frame Received logical high/low frame words.
  * @param output Contiguous logical output buffer indexed by elem_idx.
- * @param output_size Number of writable bytes in output.
+ * @param output_size Number of writable bytes in output, in bytes.
  * @param written Receives whether output was modified; must not be NULL.
- * @return RVRT_STATUS_OK for a write or a valid ignored frame;
- *         RVRT_STATUS_UNSUPPORTED for non-DATA output kind/dtype; or an
+ * @return RVRT_CODEC_STATUS_OK for a write or a valid ignored frame;
+ *         RVRT_CODEC_STATUS_UNSUPPORTED for non-DATA output kind/dtype; or an
  *         argument, mapping, or output-range status.
  */
-rvrt_status_t
+rvrt_codec_status_t
 rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
                          const rvrt_frame_t *frame, uint8_t *output,
                          size_t output_size, bool *written);
@@ -192,11 +196,11 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
  * @param frame_count Number of entries in frames.
  * @param output Caller storage for the complete decoded sequence.
  * @param output_size Capacity of output in bytes.
- * @return RVRT_STATUS_OK on success; RVRT_STATUS_UNSUPPORTED for non-STREAM
- *         or non-DATA output; RVRT_STATUS_OUT_OF_RANGE for insufficient output
- *         storage; or a metadata/argument validation status.
+ * @return RVRT_CODEC_STATUS_OK on success; RVRT_CODEC_STATUS_UNSUPPORTED for
+ * non-STREAM or non-DATA output; RVRT_CODEC_STATUS_OUT_OF_RANGE for
+ * insufficient output storage; or a metadata/argument validation status.
  */
-rvrt_status_t
+rvrt_codec_status_t
 rvrt_decode_output_frames(const rvrt_artifact_output_mapping_view_t *view,
                           const rvrt_artifact_runtime_t *runtime,
                           const rvrt_frame_t *frames, uint32_t frame_count,
@@ -205,12 +209,12 @@ rvrt_decode_output_frames(const rvrt_artifact_output_mapping_view_t *view,
 /**
  * @brief Per-output-element accumulation state for 32-bit voltage decoding.
  *
- * Tracks the partial value and the set of received 8-bit lane indices.
+ * Tracks the set of received 8-bit lane indices. The partial value is
+ * accumulated directly in the caller-cleared int32 output slot, avoiding four
+ * extra state bytes per logical output element.
  */
 typedef struct rvrt_voltage_decode_state_s {
-    /** Received payload byte for each little-endian int32 lane. */
-    uint8_t lanes[4];
-    /** Bit i is set when lanes[i] has been received for this element. */
+    /** Bit i is set when little-endian int32 lane i has been received. */
     uint8_t received_mask;
 } rvrt_voltage_decode_state_t;
 
@@ -219,10 +223,11 @@ typedef struct rvrt_voltage_decode_state_s {
  *
  * One voltage is delivered as four address-selected 8-bit lanes. Lanes from
  * different elements may be interleaved and lanes for one element may arrive
- * in any order. Zero-initialize one state entry per output element before the
- * first frame. written becomes true only when all four lanes are present; the
- * state mask is then reset for a potential next value. Like the compatibility
- * DATA decoder, this API accepts application timestep zero only.
+ * in any order. Clear output and zero-initialize one state entry per output
+ * element before the first frame. written becomes true only when all four
+ * lanes are present; the state mask is then reset for a potential next value.
+ * Like the compatibility DATA decoder, this API accepts application timestep
+ * zero only.
  * @param view Borrowed output mapping used to identify the frame address.
  * @param frame Received logical high/low frame words.
  * @param output Contiguous int32 voltage output buffer.
@@ -230,11 +235,12 @@ typedef struct rvrt_voltage_decode_state_s {
  * @param state Per-output-element accumulation state.
  * @param state_count Number of entries in state.
  * @param written Receives whether a complete int32 value was written.
- * @return RVRT_STATUS_OK for a completed, partial, or valid ignored frame;
- *         RVRT_STATUS_BAD_VALUE for a duplicate lane; RVRT_STATUS_UNSUPPORTED
- *         for non-VOLTAGE/int32 output; or an argument/mapping/range status.
+ * @return RVRT_CODEC_STATUS_OK for a completed, partial, or valid ignored
+ * frame; RVRT_CODEC_STATUS_BAD_VALUE for a duplicate lane;
+ * RVRT_CODEC_STATUS_UNSUPPORTED for non-VOLTAGE/int32 output; or an
+ * argument/mapping/range status.
  */
-rvrt_status_t rvrt_decode_voltage_frame(
+rvrt_codec_status_t rvrt_decode_voltage_frame(
     const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
     int32_t *output, uint32_t output_count, rvrt_voltage_decode_state_t *state,
     uint32_t state_count, bool *written);
@@ -245,7 +251,7 @@ rvrt_status_t rvrt_decode_voltage_frame(
  * @return NUL-terminated static string; "unknown" for an unrecognized value.
  *         The caller must not free or modify it.
  */
-const char *rvrt_status_string(rvrt_status_t status);
+const char *rvrt_codec_status_string(rvrt_codec_status_t status);
 
 #ifdef __cplusplus
 }
