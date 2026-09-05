@@ -1,6 +1,7 @@
-#include "session.h"
+#include "session_internal.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include "debug.h"
 #include "evalsoc_noc.h"
@@ -12,11 +13,14 @@ void paicore_noc_handler(void);
 /**
  * @brief Register the NoC ISR and make session the sole active receiver.
  *
- * The ISR dispatches through g_active_session, so a second initialized session
- * replaces the previous receiver and is not a supported concurrent use case.
+ * The ISR dispatches through g_active_session, so ownership is exclusive until
+ * rvrt_session_deinit() detaches it.
  */
 static rvrt_session_status_t register_irq(rvrt_session_t *session)
 {
+    if (g_active_session != NULL) {
+        return RVRT_SESSION_BUSY;
+    }
     noc_irq_disable();
     g_active_session = session;
     const int32_t result =
@@ -30,77 +34,150 @@ static rvrt_session_status_t register_irq(rvrt_session_t *session)
     return RVRT_SESSION_OK;
 }
 
-static void clear_phase(rvrt_session_phase_t *phase)
+static void clear_rx_barrier(rvrt_session_rx_barrier_t *rx_barrier)
 {
-    phase->armed = false;
-    phase->done = false;
-    phase->overflow = false;
-    phase->hardware_error = false;
-    phase->rx_count = 0U;
-    phase->output_work_count = 0U;
-    phase->complete_count = 0U;
+    rx_barrier->active = false;
+    rx_barrier->completed = false;
+    rx_barrier->overflow = false;
+    rx_barrier->hardware_error = false;
+    rx_barrier->rx_count = 0U;
+#if RVRT_SESSION_ENABLE_STATS
+    rx_barrier->received_count = 0U;
+    rx_barrier->output_work_count = 0U;
+    rx_barrier->complete_count = 0U;
+#endif
+    rx_barrier->rx_frame_handler = NULL;
+    rx_barrier->rx_frame_handler_user_data = NULL;
+    rx_barrier->rx_frame_handler_status = RVRT_SESSION_OK;
+}
+
+static void clear_sync_epoch(rvrt_session_t *session)
+{
+    session->sync_mode = RVRT_SESSION_SYNC_MODE_UNSET;
+    session->completed_timesteps = 0U;
 }
 
 /**
- * @brief Reset and publish an IRQ receive phase before a control frame is sent.
+ * @brief Start an IRQ receive barrier before a control frame is sent.
  *
- * The write barrier makes the cleared phase state visible before armed allows
- * the ISR to append received frames.
+ * The write barrier makes the cleared barrier state visible before active
+ * allows the ISR to append received frames.
  */
-static void arm_phase(rvrt_session_t *session)
+static void start_rx_barrier(rvrt_session_t *session,
+                             rvrt_session_rx_frame_handler_t rx_frame_handler,
+                             void *rx_frame_handler_user_data)
 {
-    rvrt_session_phase_t *const phase = &session->phase;
+    rvrt_session_rx_barrier_t *const rx_barrier = &session->rx_barrier;
 
     noc_irq_disable();
     noc_irq_ack();
-    clear_phase(phase);
+    clear_rx_barrier(rx_barrier);
+    rx_barrier->rx_frame_handler = rx_frame_handler;
+    rx_barrier->rx_frame_handler_user_data = rx_frame_handler_user_data;
     __WMB();
-    phase->armed = true;
+    rx_barrier->active = true;
     noc_irq_enable();
 }
 
-/**
- * @brief Wait for the ISR to finish the armed control phase, then disarm it.
- *
- * On timeout this function disables NoC IRQ delivery and marks the phase as a
- * hardware error, so callers must start a fresh synchronization phase.
- */
-static rvrt_session_status_t wait_phase(rvrt_session_t *session,
-                                        uint32_t timeout_ms,
-                                        rv_counter_t *cycles_out)
+static void receive_rx_barrier_frame(rvrt_session_t *session,
+                                     const rvrt_frame_t *frame)
 {
-    rvrt_session_phase_t *const phase = &session->phase;
+    rvrt_session_rx_barrier_t *const rx_barrier = &session->rx_barrier;
+#if RVRT_SESSION_ENABLE_STATS
+    rx_barrier->received_count++;
+    if (rvrt_frame_is_work(frame)) {
+        rx_barrier->output_work_count++;
+    }
+    const bool is_complete = rvrt_frame_is_complete(frame);
+    if (is_complete) {
+        rx_barrier->complete_count++;
+    }
+#else
+    const bool is_complete = rvrt_frame_is_complete(frame);
+#endif
+
+    if ((rx_barrier->rx_frame_handler != NULL) && !is_complete) {
+        if (rx_barrier->rx_frame_handler_status == RVRT_SESSION_OK) {
+            rx_barrier->rx_frame_handler_status = rx_barrier->rx_frame_handler(
+                rx_barrier->rx_frame_handler_user_data, frame);
+        }
+        return;
+    }
+
+    if (rx_barrier->rx_frame_handler == NULL) {
+        const uint32_t index = rx_barrier->rx_count;
+        if (__RARELY(index >= session->rx_capacity)) {
+            rx_barrier->overflow = true;
+            rx_barrier->hardware_error = true;
+            __WMB();
+            rx_barrier->completed = true;
+            return;
+        }
+        session->rx_frames[index] = *frame;
+        rx_barrier->rx_count = index + 1U;
+    }
+    if (is_complete) {
+        __WMB();
+        rx_barrier->completed = true;
+    }
+}
+
+/**
+ * @brief Wait for the ISR to finish the active control RX barrier.
+ *
+ * On timeout this function disables NoC IRQ delivery and marks the barrier as
+ * a hardware error, so callers must start a fresh synchronization barrier.
+ */
+static rvrt_session_status_t wait_rx_barrier(rvrt_session_t *session,
+                                             uint32_t timeout_ms,
+                                             rv_counter_t *cycles_out)
+{
+    rvrt_session_rx_barrier_t *const rx_barrier = &session->rx_barrier;
     const rv_counter_t start_cycles = __get_rv_cycle();
     const rv_counter_t limit_cycles =
         ((rv_counter_t)(SystemCoreClock / 1000U)) * timeout_ms;
 
-    while (__USUALLY(!phase->done)) {
+    while (__USUALLY(!rx_barrier->completed)) {
         if (__RARELY((__get_rv_cycle() - start_cycles) > limit_cycles)) {
             noc_irq_disable();
+            __RMB();
+            if (rx_barrier->completed) {
+                break;
+            }
+#if RVRT_SESSION_ENABLE_STATS
             RV_DEBUG_LOGE(
                 "runtime",
-                "phase timeout pending=%u enabled=%u rx=%u work=%u "
-                "complete=%u",
+                "RX barrier timeout pending=%u enabled=%u received=%u "
+                "work=%u complete=%u",
                 (unsigned)noc_irq_pending(), (unsigned)noc_irq_is_enabled(),
-                (unsigned)phase->rx_count, (unsigned)phase->output_work_count,
-                (unsigned)phase->complete_count);
-            phase->armed = false;
-            phase->hardware_error = true;
+                (unsigned)rx_barrier->received_count,
+                (unsigned)rx_barrier->output_work_count,
+                (unsigned)rx_barrier->complete_count);
+#else
+            RV_DEBUG_LOGE("runtime", "RX barrier timeout pending=%u enabled=%u",
+                          (unsigned)noc_irq_pending(),
+                          (unsigned)noc_irq_is_enabled());
+#endif
+            rx_barrier->active = false;
+            rx_barrier->hardware_error = true;
             return RVRT_SESSION_TIMEOUT;
         }
     }
 
     noc_irq_disable();
     __RMB();
-    phase->armed = false;
+    rx_barrier->active = false;
     if (cycles_out != NULL) {
         *cycles_out = __get_rv_cycle() - start_cycles;
     }
-    if (__RARELY(phase->overflow)) {
+    if (__RARELY(rx_barrier->overflow)) {
         return RVRT_SESSION_OVERFLOW;
     }
-    if (__RARELY(phase->hardware_error)) {
+    if (__RARELY(rx_barrier->hardware_error)) {
         return RVRT_SESSION_HARDWARE_ERROR;
+    }
+    if (__RARELY(rx_barrier->rx_frame_handler_status != RVRT_SESSION_OK)) {
+        return rx_barrier->rx_frame_handler_status;
     }
     return RVRT_SESSION_OK;
 }
@@ -108,42 +185,60 @@ static rvrt_session_status_t wait_phase(rvrt_session_t *session,
 /**
  * @brief Send one control frame through the common completion barrier.
  *
- * A NULL output pair intentionally consumes the phase, which is used for
- * model reset where the only expected response is the completion frame.
+ * A NULL output pair intentionally discards the barrier response, which is used
+ * for model reset where the only expected response is the completion frame.
  */
 static rvrt_session_status_t
 run_control_barrier(rvrt_session_t *session, const rvrt_frame_t *control_frame,
                     uint32_t timeout_ms, bool record_sync_wait,
-                    const rvrt_frame_t **rx_frames, uint32_t *rx_frame_count)
+                    const rvrt_frame_t **rx_frames, uint32_t *rx_frame_count,
+                    rvrt_session_rx_frame_handler_t rx_frame_handler,
+                    void *rx_frame_handler_user_data)
 {
-    arm_phase(session);
+    start_rx_barrier(session, rx_frame_handler, rx_frame_handler_user_data);
     noc_fifo_write_frame_words(control_frame->high, control_frame->low);
 #if RVRT_SESSION_ENABLE_STATS
-    rv_counter_t phase_cycles = 0U;
+    rv_counter_t barrier_cycles = 0U;
     const rvrt_session_status_t status =
-        wait_phase(session, timeout_ms, &phase_cycles);
+        wait_rx_barrier(session, timeout_ms, &barrier_cycles);
     if (record_sync_wait) {
-        session->stats.sync_wait_cycles += phase_cycles;
+        session->stats.sync_wait_cycles += barrier_cycles;
     }
 #else
-    const rvrt_session_status_t status = wait_phase(session, timeout_ms, NULL);
+    (void)record_sync_wait;
+    const rvrt_session_status_t status =
+        wait_rx_barrier(session, timeout_ms, NULL);
 #endif
-
     if (rx_frames != NULL) {
         *rx_frames = session->rx_frames;
     }
     if (rx_frame_count != NULL) {
-        *rx_frame_count = session->phase.rx_count;
+        *rx_frame_count = session->rx_barrier.rx_count;
     }
 #if RVRT_SESSION_ENABLE_STATS
     session->stats.sent_frames++;
-    session->stats.rx_frames += session->phase.rx_count;
-    session->stats.output_work_frames += session->phase.output_work_count;
-    session->stats.complete_frames += session->phase.complete_count;
-    session->stats.overflow |= session->phase.overflow;
-    session->stats.hardware_error |= session->phase.hardware_error;
+    session->stats.rx_frames += session->rx_barrier.received_count;
+    session->stats.output_work_frames += session->rx_barrier.output_work_count;
+    session->stats.complete_frames += session->rx_barrier.complete_count;
+    session->stats.overflow |= session->rx_barrier.overflow;
+    session->stats.hardware_error |= session->rx_barrier.hardware_error;
 #endif
+    if (status != RVRT_SESSION_OK) {
+        noc_irq_disable();
+        session->rx_barrier.active = false;
+        session->rx_barrier.rx_frame_handler = NULL;
+        session->rx_barrier.rx_frame_handler_user_data = NULL;
+        session->faulted = true;
+    }
     return status;
+}
+
+static rvrt_session_status_t discard_reset_frame(void *user_data,
+                                                 const rvrt_frame_t *frame)
+{
+    (void)user_data;
+    (void)frame;
+    return RVRT_SESSION_OK;
 }
 
 rvrt_session_status_t rvrt_session_init(rvrt_session_t *session,
@@ -154,6 +249,9 @@ rvrt_session_status_t rvrt_session_init(rvrt_session_t *session,
                  (config->rx_capacity == 0U))) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
+    if (g_active_session != NULL) {
+        return RVRT_SESSION_BUSY;
+    }
 
     rvrt_artifact_runtime_t runtime = {0};
     if (__RARELY(rvrt_artifact_thread_runtime(config->artifact,
@@ -162,21 +260,52 @@ rvrt_session_status_t rvrt_session_init(rvrt_session_t *session,
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
+    memset(session, 0, sizeof(*session));
     session->artifact = config->artifact;
     session->thread_index = config->thread_index;
     session->rx_frames = config->rx_frames;
     session->rx_capacity = config->rx_capacity;
-#if RVRT_SESSION_ENABLE_STATS
-    session->stats = (rvrt_session_stats_t){0};
-#endif
-    clear_phase(&session->phase);
-    return register_irq(session);
+    session->faulted = false;
+    clear_sync_epoch(session);
+    session->stats.enabled = RVRT_SESSION_ENABLE_STATS != 0;
+    clear_rx_barrier(&session->rx_barrier);
+    const rvrt_session_status_t status = register_irq(session);
+    if (status != RVRT_SESSION_OK) {
+        memset(session, 0, sizeof(*session));
+    }
+    return status;
+}
+
+rvrt_session_status_t rvrt_session_deinit(rvrt_session_t *session)
+{
+    if (session == NULL) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if ((g_active_session != NULL) && (g_active_session != session)) {
+        return RVRT_SESSION_BUSY;
+    }
+    if ((g_active_session == session) && session->rx_barrier.active) {
+        return RVRT_SESSION_BUSY;
+    }
+
+    noc_irq_disable();
+    noc_irq_ack();
+    if (g_active_session == session) {
+        g_active_session = NULL;
+    }
+    memset(session, 0, sizeof(*session));
+    return RVRT_SESSION_OK;
 }
 
 rvrt_session_status_t rvrt_session_load_config(rvrt_session_t *session)
 {
-    if (__RARELY((session == NULL) || (session->artifact == NULL) ||
-                 session->phase.armed)) {
+    if (__RARELY((session == NULL) || (session->artifact == NULL))) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (__RARELY(session->faulted)) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if (__RARELY(session->rx_barrier.active)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
@@ -207,7 +336,6 @@ rvrt_session_status_t rvrt_session_load_config(rvrt_session_t *session)
     if (irq_was_enabled) {
         noc_irq_enable();
     }
-
 #if RVRT_SESSION_ENABLE_STATS
     session->stats.sent_frames += frame_count;
 #endif
@@ -219,8 +347,13 @@ rvrt_session_status_t rvrt_session_send_frames(rvrt_session_t *session,
                                                uint32_t frame_count)
 {
     if (__RARELY((session == NULL) || (session->artifact == NULL) ||
-                 ((frame_count != 0U) && (frames == NULL)) ||
-                 session->phase.armed)) {
+                 ((frame_count != 0U) && (frames == NULL)))) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (__RARELY(session->faulted)) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if (__RARELY(session->rx_barrier.active)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
@@ -243,51 +376,146 @@ rvrt_session_status_t rvrt_session_reset_model(rvrt_session_t *session,
                                                uint32_t timeout_ms)
 {
     if (__RARELY((session == NULL) || (session->artifact == NULL) ||
-                 (session->rx_frames == NULL) || (session->rx_capacity == 0U) ||
-                 session->phase.armed)) {
+                 (session->rx_frames == NULL) ||
+                 (session->rx_capacity == 0U))) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (__RARELY(session->faulted)) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if (__RARELY(session->rx_barrier.active)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
     rvrt_frame_t init_frame = {0};
     if (__RARELY(rvrt_build_init_frame(session->artifact, session->thread_index,
-                                       &init_frame) != RVRT_STATUS_OK)) {
+                                       &init_frame) != RVRT_CODEC_STATUS_OK)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
-    return run_control_barrier(session, &init_frame, timeout_ms, false, NULL,
-                               NULL);
+    const rvrt_session_status_t status =
+        run_control_barrier(session, &init_frame, timeout_ms, false, NULL, NULL,
+                            discard_reset_frame, NULL);
+    if (status == RVRT_SESSION_OK) {
+        clear_sync_epoch(session);
+    }
+    return status;
 }
 
-rvrt_session_status_t rvrt_session_sync_wait(rvrt_session_t *session,
-                                             uint32_t sync_steps,
-                                             uint32_t timeout_ms,
-                                             const rvrt_frame_t **rx_frames,
-                                             uint32_t *rx_frame_count)
+static rvrt_session_status_t
+sync_wait_payload_impl(rvrt_session_t *session, uint32_t sync_payload,
+                       uint32_t timeout_ms, const rvrt_frame_t **rx_frames,
+                       uint32_t *rx_frame_count,
+                       rvrt_session_rx_frame_handler_t rx_frame_handler,
+                       void *rx_frame_handler_user_data)
 {
     if (__RARELY((session == NULL) || (session->artifact == NULL) ||
                  (session->rx_frames == NULL) || (session->rx_capacity == 0U) ||
-                 (rx_frames == NULL) || (rx_frame_count == NULL) ||
-                 session->phase.armed)) {
+                 (((rx_frames == NULL) || (rx_frame_count == NULL)) &&
+                  (rx_frame_handler == NULL)))) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (__RARELY(session->faulted)) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if (__RARELY(session->rx_barrier.active)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
-    *rx_frames = NULL;
-    *rx_frame_count = 0U;
+    if (rx_frames != NULL) {
+        *rx_frames = NULL;
+    }
+    if (rx_frame_count != NULL) {
+        *rx_frame_count = 0U;
+    }
     rvrt_frame_t sync_frame = {0};
-    if (__RARELY(rvrt_build_sync_frame(session->artifact, session->thread_index,
-                                       sync_steps,
-                                       &sync_frame) != RVRT_STATUS_OK)) {
+    if (__RARELY(rvrt_build_sync_payload_frame(
+                     session->artifact, session->thread_index, sync_payload,
+                     &sync_frame) != RVRT_CODEC_STATUS_OK)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
     const rvrt_session_status_t status = run_control_barrier(
-        session, &sync_frame, timeout_ms, true, rx_frames, rx_frame_count);
+        session, &sync_frame, timeout_ms, true, rx_frames, rx_frame_count,
+        rx_frame_handler, rx_frame_handler_user_data);
 #if RVRT_SESSION_ENABLE_STATS
     if (status == RVRT_SESSION_OK) {
-        session->stats.sync_phases++;
+        session->stats.sync_barriers++;
     }
 #endif
     return status;
+}
+
+rvrt_session_status_t rvrt_session_sync_wait_payload(
+    rvrt_session_t *session, uint32_t sync_payload, uint32_t timeout_ms,
+    const rvrt_frame_t **rx_frames, uint32_t *rx_frame_count)
+{
+    if (session == NULL) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (session->faulted) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if (session->sync_mode == RVRT_SESSION_SYNC_MODE_TIMELINE) {
+        return RVRT_SESSION_SYNC_MODE_ERROR;
+    }
+    const rvrt_session_status_t status =
+        sync_wait_payload_impl(session, sync_payload, timeout_ms, rx_frames,
+                               rx_frame_count, NULL, NULL);
+    if (status == RVRT_SESSION_OK) {
+        session->sync_mode = RVRT_SESSION_SYNC_MODE_RAW_PAYLOAD;
+    }
+    return status;
+}
+
+static rvrt_session_status_t sync_wait_until_impl(
+    rvrt_session_t *session, uint32_t completed_timesteps, uint32_t timeout_ms,
+    const rvrt_frame_t **rx_frames, uint32_t *rx_frame_count,
+    rvrt_session_rx_frame_handler_t rx_frame_handler, void *user_data)
+{
+    if (session == NULL) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (session->faulted) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if ((session->sync_mode == RVRT_SESSION_SYNC_MODE_RAW_PAYLOAD) ||
+        ((session->sync_mode == RVRT_SESSION_SYNC_MODE_TIMELINE) &&
+         (completed_timesteps <= session->completed_timesteps))) {
+        return RVRT_SESSION_SYNC_MODE_ERROR;
+    }
+
+    const uint32_t sync_payload =
+        (session->sync_mode == RVRT_SESSION_SYNC_MODE_TIMELINE)
+            ? completed_timesteps - session->completed_timesteps
+            : completed_timesteps;
+    const rvrt_session_status_t status =
+        sync_wait_payload_impl(session, sync_payload, timeout_ms, rx_frames,
+                               rx_frame_count, rx_frame_handler, user_data);
+    if (status == RVRT_SESSION_OK) {
+        session->sync_mode = RVRT_SESSION_SYNC_MODE_TIMELINE;
+        session->completed_timesteps = completed_timesteps;
+    }
+    return status;
+}
+
+rvrt_session_status_t rvrt_session_sync_wait_until(
+    rvrt_session_t *session, uint32_t completed_timesteps, uint32_t timeout_ms,
+    const rvrt_frame_t **rx_frames, uint32_t *rx_frame_count)
+{
+    return sync_wait_until_impl(session, completed_timesteps, timeout_ms,
+                                rx_frames, rx_frame_count, NULL, NULL);
+}
+
+rvrt_session_status_t rvrt_session_sync_wait_until_with_rx_handler(
+    rvrt_session_t *session, uint32_t completed_timesteps, uint32_t timeout_ms,
+    rvrt_session_rx_frame_handler_t rx_frame_handler, void *user_data)
+{
+    if (rx_frame_handler == NULL) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    return sync_wait_until_impl(session, completed_timesteps, timeout_ms, NULL,
+                                NULL, rx_frame_handler, user_data);
 }
 
 void paicore_noc_handler(void)
@@ -297,42 +525,22 @@ void paicore_noc_handler(void)
     noc_irq_disable();
 
     rvrt_session_t *const session = g_active_session;
-    if (__RARELY((session == NULL) || !session->phase.armed)) {
+    if (__RARELY((session == NULL) || !session->rx_barrier.active)) {
         RESTORE_IRQ_CSR_CONTEXT();
         return;
     }
 
-    rvrt_session_phase_t *const phase = &session->phase;
-    while (!phase->done) {
-        const uint32_t index = phase->rx_count;
-        if (__RARELY(index >= session->rx_capacity)) {
-            phase->overflow = true;
-            phase->hardware_error = true;
-            __WMB();
-            phase->done = true;
-            break;
-        }
-
+    rvrt_session_rx_barrier_t *const rx_barrier = &session->rx_barrier;
+    while (!rx_barrier->completed) {
         uint32_t high = 0U;
         uint32_t low = 0U;
         if (__RARELY(noc_fifo_read_frame_words(&high, &low) != 0)) {
-            phase->hardware_error = true;
+            rx_barrier->hardware_error = true;
             __WMB();
-            phase->done = true;
-            break;
-        }
-        session->rx_frames[index].high = high;
-        session->rx_frames[index].low = low;
-        phase->rx_count = index + 1U;
-
-        const rvrt_frame_t *const frame = &session->rx_frames[index];
-        if (rvrt_frame_is_work(frame)) {
-            phase->output_work_count++;
-        }
-        if (rvrt_frame_is_complete(frame)) {
-            phase->complete_count++;
-            __WMB();
-            phase->done = true;
+            rx_barrier->completed = true;
+        } else {
+            const rvrt_frame_t frame = {high, low};
+            receive_rx_barrier_frame(session, &frame);
         }
     }
 
@@ -342,13 +550,16 @@ void paicore_noc_handler(void)
 rvrt_session_status_t rvrt_session_get_stats(const rvrt_session_t *session,
                                              rvrt_session_stats_t *stats)
 {
-    if (__RARELY((session == NULL) || (stats == NULL))) {
+    if (__RARELY((session == NULL) || (session->artifact == NULL) ||
+                 (stats == NULL))) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
-    *stats = (rvrt_session_stats_t){0};
 #if RVRT_SESSION_ENABLE_STATS
-    *stats = session->stats;
+    const rvrt_session_stats_t snapshot = session->stats;
+    *stats = snapshot;
+#else
+    *stats = (rvrt_session_stats_t){0};
 #endif
     return RVRT_SESSION_OK;
 }
@@ -368,6 +579,14 @@ const char *rvrt_session_status_string(rvrt_session_status_t status)
             return "hardware error";
         case RVRT_SESSION_RUNTIME_ERROR:
             return "runtime error";
+        case RVRT_SESSION_SYNC_MODE_ERROR:
+            return "sync mode error";
+        case RVRT_SESSION_SCHEDULE_UNSUPPORTED:
+            return "schedule unsupported";
+        case RVRT_SESSION_FAULTED:
+            return "session faulted";
+        case RVRT_SESSION_BUSY:
+            return "session busy";
         default:
             return "unknown";
     }

@@ -10,38 +10,30 @@
 extern "C" {
 #endif
 
-#ifndef RVRT_MAX_WORKSPACE_FRAMES
-/** Compile-time upper bound for one caller-provided input frame workspace. */
-#define RVRT_MAX_WORKSPACE_FRAMES 512U
-#endif
-
-#if (RVRT_MAX_WORKSPACE_FRAMES < 1) || (RVRT_MAX_WORKSPACE_FRAMES > 512)
-#error "RVRT_MAX_WORKSPACE_FRAMES must be between 1 and 512"
-#endif
-
 /**
  * @brief Encode and send one mapped input timestep in bounded chunks.
  *
  * Repeatedly calls the resumable input codec and sends each completed chunk
  * until every mapping entry has been visited. Zero-valued entries advance the
  * internal cursor but do not produce work frames. The helper hides cursor and
- * chunking details while retaining caller control of SRAM use through
+ * chunking details while the caller controls SRAM use through
  * workspace_capacity.
  *
  * @param session Initialized session used to send encoded frames; its current
- * phase must not be armed.
+ * RX barrier must not be active.
  * @param mapping Borrowed input mapping describing each tensor element's work
  * frame destination and encoding.
  * @param timestep Application timestep encoded into generated work frames.
  * @param input Contiguous input tensor bytes read according to mapping element
  * indices.
- * @param input_size Number of readable bytes in input.
+ * @param input_size Number of readable bytes in input, in bytes.
  * @param workspace Caller-owned storage reused for each encoded frame chunk.
- * @param workspace_capacity Number of frames in workspace; must be in the
- * inclusive range 1..RVRT_MAX_WORKSPACE_FRAMES.
+ * @param workspace_capacity Number of rvrt_frame_t entries in workspace, not
+ *        bytes; must be nonzero.
  * @return RVRT_SESSION_OK after the complete mapping has been sent.
  * @return RVRT_SESSION_RUNTIME_ERROR for invalid arguments, invalid workspace
  * capacity, or an input encoding failure.
+ * @return RVRT_SESSION_FAULTED when a previous barrier failed.
  * @return Any other status returned by rvrt_session_send_frames().
  *
  * @note The operation is not transactional. Frames sent before a later
