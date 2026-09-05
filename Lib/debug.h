@@ -31,11 +31,15 @@ void rv_debug_logf(rv_debug_level_t level, const char *title,
                    const char *function_name, const char *fmt, ...)
     RV_DEBUG_PRINTF_LIKE(4, 5);
 
-#ifndef RV_DEBUG_COMPILETIME_ENABLE
-#define RV_DEBUG_COMPILETIME_ENABLE 1
+#ifndef RV_DEBUG_ENABLE_LOGGING
+#define RV_DEBUG_ENABLE_LOGGING 0
 #endif
 
-#if RV_DEBUG_COMPILETIME_ENABLE
+#if (RV_DEBUG_ENABLE_LOGGING != 0) && (RV_DEBUG_ENABLE_LOGGING != 1)
+#error "RV_DEBUG_ENABLE_LOGGING must be 0 or 1"
+#endif
+
+#if RV_DEBUG_ENABLE_LOGGING
 #define RV_DEBUG_LOGE(title, ...)                                              \
     rv_debug_logf(RV_DEBUG_ERROR, title, __func__, __VA_ARGS__)
 #define RV_DEBUG_LOGW(title, ...)                                              \
