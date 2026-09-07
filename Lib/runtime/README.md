@@ -172,9 +172,18 @@ INCDIRS += . $(NUCLEI_SDK_ROOT)/Lib
 include $(NUCLEI_SDK_ROOT)/Lib/runtime/build.mk
 ```
 
-`Lib/runtime/build.mk` 提供 `RVRT_SESSION_ENABLE_STATS`（默认 `0`）、头文件
+`Lib/runtime/build.mk` 提供 `RVRT_ENABLE_STATS`（默认 `0`）、头文件
 路径和 runtime 源目录。实验性 executor 位于 `Lib/runtime/experimental`，
 不会因包含该 Makefile 而进入生产构建。
+
+宏按可见范围命名：`RVRT_ENABLE_STATS` 以及 `frame_codec.h`、
+`artifact_reader.h` 中的 `RVRT_*` 是应用可见的构建/API 常量，保持稳定；
+`frame_codec_internal.h` 中的 `RVRT_WF_*`、`RVRT_VOLT_*` 只供 runtime
+内部共享，`.c` 文件中的 `FC_*` 和 `RUN_*` 只在对应编译单元内使用。
+这些内部宏不是公共 ABI。各头文件的 include guard 和
+`PAIRV_RUNTIME_BUILD_MK_INCLUDED` 是防重复包含的结构性宏，不属于 API
+命名；generated FlatBuffers 的 include guard 和 `experimental/` 的 ABI
+宏也不参与该命名约定调整。
 
 裸机示例可按项目 Makefile 使用：
 

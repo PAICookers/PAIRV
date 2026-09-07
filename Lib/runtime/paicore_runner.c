@@ -183,7 +183,7 @@ runner_decode_voltage_fast_frame(const rvrt_paicore_runner_t *runner,
         (int32_t *)(void *)output, output_index,
         output_capacity / sizeof(int32_t), runner->voltage_state, state_index,
         runner->voltage_state_capacity, lane,
-        (uint8_t)(frame->low & RVRT_WORK_FRAME_PAYLOAD_MASK), NULL);
+        (uint8_t)(frame->low & RVRT_WF_PAYLOAD_MASK), NULL);
 }
 
 static rvrt_session_status_t
@@ -470,11 +470,10 @@ rvrt_paicore_runner_get_stats(const rvrt_paicore_runner_t *runner,
     return rvrt_session_get_stats(&runner->session, stats);
 }
 
-rvrt_session_status_t
-rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
-                               const uint8_t *input, size_t input_capacity,
-                               size_t input_stride, void *output,
-                               size_t output_capacity, size_t output_stride)
+rvrt_session_status_t rvrt_paicore_runner_run_sample_profiled(
+    rvrt_paicore_runner_t *runner, const uint8_t *input, size_t input_capacity,
+    size_t input_stride, void *output, size_t output_capacity,
+    size_t output_stride, rvrt_paicore_runner_sample_timing_t *timing)
 {
     if ((runner == NULL) || (runner->session.artifact != &runner->artifact) ||
         (runner->input_view.entries == NULL) ||
@@ -482,6 +481,23 @@ rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
         (output == NULL) || (runner->encode_frame_capacity == 0U)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
+#if RVRT_ENABLE_STATS
+    if (timing != NULL) {
+        const uint32_t sync_count = runner->runtime.timesteps +
+                                    (runner->runtime.completion_sync_timestep >
+                                             runner->runtime.timesteps
+                                         ? 1U
+                                         : 0U);
+        if ((timing->sync_round_trip_cycles == NULL) ||
+            (timing->sync_round_trip_capacity < sync_count)) {
+            return RVRT_SESSION_BUFFER_TOO_SMALL;
+        }
+        timing->init_round_trip_cycles = 0U;
+        timing->sync_round_trip_count = 0U;
+    }
+#else
+    (void)timing;
+#endif
     const size_t effective_input_stride =
         (input_stride == 0U) ? runner->input_row_bytes : input_stride;
     const size_t effective_output_stride =
@@ -525,8 +541,17 @@ rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
     }
 
     RV_DEBUG_LOGI("paicore_runner", "sample reset begin");
+#if RVRT_ENABLE_STATS
+    const rv_counter_t init_round_trip_start = __get_rv_cycle();
+#endif
     rvrt_session_status_t status =
         rvrt_session_reset_model(&runner->session, runner->timeout_ms);
+#if RVRT_ENABLE_STATS
+    if (timing != NULL) {
+        timing->init_round_trip_cycles =
+            __get_rv_cycle() - init_round_trip_start;
+    }
+#endif
     if (status != RVRT_SESSION_OK) {
         return runner_session_failure("reset", 0U, status);
     }
@@ -563,9 +588,18 @@ rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
         __WMB();
         RV_DEBUG_LOGI("paicore_runner", "timestep=%u sync begin",
                       (unsigned)timestep);
+#if RVRT_ENABLE_STATS
+        const rv_counter_t sync_round_trip_start = __get_rv_cycle();
+#endif
         status = rvrt_session_sync_wait_until_with_rx_handler(
             &runner->session, completed_timesteps, runner->timeout_ms,
             rx_frame_handler, &decode);
+#if RVRT_ENABLE_STATS
+        if (timing != NULL) {
+            timing->sync_round_trip_cycles[timing->sync_round_trip_count++] =
+                __get_rv_cycle() - sync_round_trip_start;
+        }
+#endif
         if (status != RVRT_SESSION_OK) {
             return runner_session_failure("sync", completed_timesteps, status);
         }
@@ -574,9 +608,18 @@ rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
     }
 
     if (runner->runtime.completion_sync_timestep > runner->runtime.timesteps) {
+#if RVRT_ENABLE_STATS
+        const rv_counter_t completion_round_trip_start = __get_rv_cycle();
+#endif
         status = rvrt_session_sync_wait_until_with_rx_handler(
             &runner->session, runner->runtime.completion_sync_timestep,
             runner->timeout_ms, rx_frame_handler, &decode);
+#if RVRT_ENABLE_STATS
+        if (timing != NULL) {
+            timing->sync_round_trip_cycles[timing->sync_round_trip_count++] =
+                __get_rv_cycle() - completion_round_trip_start;
+        }
+#endif
         if (status != RVRT_SESSION_OK) {
             return runner_session_failure(
                 "completion sync", runner->runtime.completion_sync_timestep,
@@ -584,4 +627,15 @@ rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
         }
     }
     return RVRT_SESSION_OK;
+}
+
+rvrt_session_status_t
+rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
+                               const uint8_t *input, size_t input_capacity,
+                               size_t input_stride, void *output,
+                               size_t output_capacity, size_t output_stride)
+{
+    return rvrt_paicore_runner_run_sample_profiled(
+        runner, input, input_capacity, input_stride, output, output_capacity,
+        output_stride, NULL);
 }

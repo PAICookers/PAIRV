@@ -56,6 +56,25 @@ typedef struct rvrt_paicore_runner_s {
 } rvrt_paicore_runner_t;
 
 /**
+ * @brief Caller-owned timing storage for one complete runner sample.
+ *
+ * `sync_round_trip_cycles` receives one measurement for every submitted SYNC
+ * barrier. Each value spans SYNC submission through its COMPLETE reception;
+ * it includes transport, PAICORE execution, IRQ service, and output handling.
+ * It is not a PAICORE-core-only performance counter.
+ */
+typedef struct rvrt_paicore_runner_sample_timing_s {
+    /** Reset INIT submission through INIT COMPLETE reception. */
+    rv_counter_t init_round_trip_cycles;
+    /** Storage for per-SYNC submission-to-COMPLETE round-trip cycles. */
+    rv_counter_t *sync_round_trip_cycles;
+    /** Number of entries available in sync_round_trip_cycles. */
+    uint32_t sync_round_trip_capacity;
+    /** Number of SYNC measurements written; may be partial after a failure. */
+    uint32_t sync_round_trip_count;
+} rvrt_paicore_runner_sample_timing_t;
+
+/**
  * @brief Parse, configure, and prepare the first PAICORE I/O pair for samples.
  *
  * The runner reads the artifact, initializes its internal session on thread
@@ -88,7 +107,7 @@ rvrt_paicore_runner_release(rvrt_paicore_runner_t *runner);
  * @brief Copy cumulative transport statistics for a deployed runner.
  *
  * Statistics accumulate from deploy until release. With
- * RVRT_SESSION_ENABLE_STATS=0, the call succeeds and returns an all-zero
+ * RVRT_ENABLE_STATS=0, the call succeeds and returns an all-zero
  * snapshot whose enabled member is false.
  * @param runner Successfully deployed runner.
  * @param stats Receives the diagnostic snapshot; must not be NULL.
@@ -133,6 +152,23 @@ rvrt_paicore_runner_run_sample(rvrt_paicore_runner_t *runner,
                                const uint8_t *input, size_t input_capacity,
                                size_t input_stride, void *output,
                                size_t output_capacity, size_t output_stride);
+
+/**
+ * @brief Run one sample and record INIT plus per-SYNC round-trip timings.
+ *
+ * This has the same execution semantics as rvrt_paicore_runner_run_sample().
+ * `timing` is caller-owned and may be NULL. When non-NULL, its SYNC storage
+ * must hold every barrier required by this artifact sample; otherwise no model
+ * reset or input frame is sent and RVRT_SESSION_BUFFER_TOO_SMALL is returned.
+ * If a reset or SYNC barrier fails after timing starts, the fields contain the
+ * measurements already written, including the failed barrier's elapsed time.
+ * With RVRT_ENABLE_STATS=0, timing is ignored: its storage is neither
+ * validated nor written.
+ */
+rvrt_session_status_t rvrt_paicore_runner_run_sample_profiled(
+    rvrt_paicore_runner_t *runner, const uint8_t *input, size_t input_capacity,
+    size_t input_stride, void *output, size_t output_capacity,
+    size_t output_stride, rvrt_paicore_runner_sample_timing_t *timing);
 
 #ifdef __cplusplus
 }

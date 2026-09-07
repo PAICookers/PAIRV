@@ -20,9 +20,15 @@ rvrt_session_status_t rvrt_session_send_input_timestep(
 
     while (1) {
         uint32_t frame_count = 0U;
+#if RVRT_ENABLE_STATS
+        const rv_counter_t encode_start = __get_rv_cycle();
+#endif
         const rvrt_codec_status_t codec_status = rvrt_encode_input_chunk(
             mapping, &cursor, input, input_size, workspace, workspace_capacity,
             &frame_count);
+#if RVRT_ENABLE_STATS
+        session->stats.input_encode_cycles += __get_rv_cycle() - encode_start;
+#endif
         if (((codec_status != RVRT_CODEC_STATUS_DONE) &&
              (codec_status != RVRT_CODEC_STATUS_BUFFER_FULL)) ||
             ((codec_status == RVRT_CODEC_STATUS_BUFFER_FULL) &&
@@ -32,8 +38,17 @@ rvrt_session_status_t rvrt_session_send_input_timestep(
 
         RV_DEBUG_LOGI("runtime", "input chunk encoded frames=%u status=%u",
                       (unsigned)frame_count, (unsigned)codec_status);
+#if RVRT_ENABLE_STATS
+        const rv_counter_t submit_start = __get_rv_cycle();
+#endif
         const rvrt_session_status_t send_status =
             rvrt_session_send_frames(session, workspace, frame_count);
+#if RVRT_ENABLE_STATS
+        session->stats.input_submit_cycles += __get_rv_cycle() - submit_start;
+        if (send_status == RVRT_SESSION_OK) {
+            session->stats.input_frames += frame_count;
+        }
+#endif
         if (send_status != RVRT_SESSION_OK) {
             return send_status;
         }

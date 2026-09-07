@@ -11,13 +11,14 @@
 extern "C" {
 #endif
 
-#ifndef RVRT_SESSION_ENABLE_STATS
-/** Compile-time switch for optional session transport statistics. */
-#define RVRT_SESSION_ENABLE_STATS 0
+#ifndef RVRT_ENABLE_STATS
+/** Compile-time switch for optional runtime transport statistics and timings.
+ */
+#define RVRT_ENABLE_STATS 0
 #endif
 
-#if (RVRT_SESSION_ENABLE_STATS != 0) && (RVRT_SESSION_ENABLE_STATS != 1)
-#error "RVRT_SESSION_ENABLE_STATS must be 0 or 1"
+#if (RVRT_ENABLE_STATS != 0) && (RVRT_ENABLE_STATS != 1)
+#error "RVRT_ENABLE_STATS must be 0 or 1"
 #endif
 
 /** @brief Result of a PAICORE transport or synchronization operation. */
@@ -82,12 +83,14 @@ typedef struct rvrt_session_rx_barrier_s {
     volatile bool hardware_error;
     /** Number of raw frames stored in the caller-owned RX buffer. */
     volatile uint32_t rx_count;
+#if RVRT_ENABLE_STATS
     /** Optional count of raw frames received, including IRQ-handled frames. */
     volatile uint32_t received_count;
     /** Optional count of received PAICORE work frames. */
     volatile uint32_t output_work_count;
     /** Optional count of received completion frames. */
     volatile uint32_t complete_count;
+#endif
     /** Optional IRQ-only handler for non-COMPLETE synchronization frames. */
     rvrt_session_rx_frame_handler_t rx_frame_handler;
     /** Opaque user data passed to rx_frame_handler. */
@@ -102,6 +105,10 @@ typedef struct rvrt_session_stats_s {
     bool enabled;
     /** Static config, input, and control frames submitted to NoC. */
     uint32_t sent_frames;
+    /** Static configuration frames submitted during deployment. */
+    uint32_t config_frames;
+    /** Input work frames submitted by rvrt_session_send_input_timestep(). */
+    uint32_t input_frames;
     /** Raw frames received across reset, sync, and failed barriers. */
     uint32_t rx_frames;
     /** Received work-frame count. */
@@ -116,6 +123,18 @@ typedef struct rvrt_session_stats_s {
     bool hardware_error;
     /** Cycles spent in raw/timeline sync waits; excludes model reset. */
     rv_counter_t sync_wait_cycles;
+    /** Cycles in config lookup and static frame submission. */
+    rv_counter_t config_submit_cycles;
+    /** Cycles spent encoding mapped input chunks. */
+    rv_counter_t input_encode_cycles;
+    /** Cycles spent submitting encoded input chunks to NoC. */
+    rv_counter_t input_submit_cycles;
+    /** Cycles spent waiting for the model-reset INIT completion barrier. */
+    rv_counter_t init_wait_cycles;
+    /** Total service cycles across PAICORE NoC IRQ entries. */
+    rv_counter_t rx_irq_service_cycles;
+    /** Number of PAICORE NoC IRQ entries that began during active barriers. */
+    uint32_t rx_irq_count;
 } rvrt_session_stats_t;
 
 /**
@@ -163,8 +182,10 @@ typedef struct rvrt_session_s {
     uint32_t completed_timesteps;
     /** Set after a barrier failure; transport operations are then rejected. */
     bool faulted;
+#if RVRT_ENABLE_STATS
     /** Internal counters returned by rvrt_session_get_stats(). */
     rvrt_session_stats_t stats;
+#endif
     /** Internal IRQ RX barrier state; applications must not modify it. */
     rvrt_session_rx_barrier_t rx_barrier;
 } rvrt_session_t;
@@ -306,13 +327,13 @@ rvrt_session_status_t rvrt_session_sync_wait_until(
  * @brief Copy accumulated transport statistics and their availability.
  *
  * Statistics are observational only and never affect session behavior. With
- * RVRT_SESSION_ENABLE_STATS=0, counter-update code is omitted while the public
- * structure layout remains unchanged.
+ * RVRT_ENABLE_STATS=0, counter-update code and session-internal counter state
+ * are omitted; the public result structure remains unchanged.
  * @param session Initialized session whose counters are queried.
  * @param stats Receives a snapshot; must not be NULL.
  * @return RVRT_SESSION_OK on success; RVRT_SESSION_RUNTIME_ERROR for an
  *         uninitialized session or NULL argument. With
- *         RVRT_SESSION_ENABLE_STATS=0, counters are zero and stats.enabled is
+ *         RVRT_ENABLE_STATS=0, counters are zero and stats.enabled is
  *         false.
  */
 rvrt_session_status_t rvrt_session_get_stats(const rvrt_session_t *session,
