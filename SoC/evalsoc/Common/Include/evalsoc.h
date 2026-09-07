@@ -810,6 +810,17 @@ extern void delay_1ms(uint32_t count);
 
 /** @} */ /* End of group Nuclei */
 
+/*
+ * Mark large read-only data for the linker section used by the hybrid
+ * ilmflashxip image. The linker script, not this macro alone, selects the
+ * final memory region; other DOWNLOAD modes may place the section elsewhere.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#define LARGE_CONST const __attribute__((section(".large_const_data")))
+#else
+#define LARGE_CONST const
+#endif
+
 #ifdef __cplusplus
 }
 #endif

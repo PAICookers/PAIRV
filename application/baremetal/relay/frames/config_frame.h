@@ -1,7 +1,8 @@
+#include <nuclei_sdk_soc.h>
 #include <stdint.h>
 
 #define HAS_CONFIG_FRAME 1
-const uint32_t config_frame[] __attribute__((section(".large_const_data"))) = {
+LARGE_CONST uint32_t config_frame[] = {
     0x00000800, 0x00000003, 0x0F7A8000, 0x00038002, 0x28100000, 0x1400140A, 0x00010000, 0x00000001,
     0x20000800, 0x0000055C, 0x0007036D, 0x00000000, 0x00000004, 0x40000000, 0x00000400, 0x0173C000,
     0x80000000, 0x00000000, 0x0037066D, 0x00000000, 0x00008004, 0x40000000, 0x00000401, 0xFE2AC000,

@@ -1,6 +1,5 @@
+#include <nuclei_sdk_soc.h>
 #include <stdint.h>
 
 #define HAS_INIT_FRAME 1
-const uint32_t init_frame[] __attribute__((section(".large_const_data"))) = {
-    0xD0000800, 0x00000000,
-};
+LARGE_CONST uint32_t init_frame[] = {0xD0000800, 0x00000000};
