@@ -7,13 +7,13 @@
 #include "session_internal.h"
 #include "session_io.h"
 
-#define RUNNER_VOLTAGE_LANE_ADDRESS_SHIFT 3U
-#define RUNNER_VOLTAGE_LANE_STRIDE 8U
-#define RUNNER_VOLTAGE_GROUP_SIZE 8U
-#define RUNNER_VOLTAGE_GROUP_PITCH 32U
-#define RUNNER_VOLTAGE_GROUP_SIZE_SHIFT 3U
-#define RUNNER_VOLTAGE_GROUP_PITCH_SHIFT 5U
-#define RUNNER_DATA_DTYPE_UINT1 1U
+#define RUN_VOLT_LANE_ADDR_SHIFT 3U
+#define RUN_VOLT_LANE_STRIDE 8U
+#define RUN_VOLT_GROUP_SIZE 8U
+#define RUN_VOLT_GROUP_PITCH 32U
+#define RUN_VOLT_GROUP_SIZE_SHIFT 3U
+#define RUN_VOLT_GROUP_PITCH_SHIFT 5U
+#define RUN_DATA_UINT1 1U
 
 static rvrt_session_status_t
 runner_session_failure(const char *operation, uint32_t completed_timesteps,
@@ -63,7 +63,7 @@ configure_fast_layout(rvrt_paicore_runner_t *runner)
     runner->has_fast_data_layout = false;
     runner->has_fast_voltage_layout = false;
     const bool is_data = (runner->output_view.kind == RVRT_OUTPUT_DATA) &&
-                         (runner->output_view.dtype == RUNNER_DATA_DTYPE_UINT1);
+                         (runner->output_view.dtype == RUN_DATA_UINT1);
     const bool is_voltage =
         (runner->output_view.kind == RVRT_OUTPUT_VOLTAGE) &&
         (runner->output_view.dtype == RVRT_DTYPE_VOLTAGE_INT32);
@@ -79,9 +79,9 @@ configure_fast_layout(rvrt_paicore_runner_t *runner)
         rvrt_artifact_output_entry_t entry = {0};
         bool found = false;
         const uint32_t expected_axon =
-            is_voltage ? ((element >> RUNNER_VOLTAGE_LANE_ADDRESS_SHIFT)
-                          << RUNNER_VOLTAGE_GROUP_PITCH_SHIFT) |
-                             (element & (RUNNER_VOLTAGE_GROUP_SIZE - 1U))
+            is_voltage ? ((element >> RUN_VOLT_LANE_ADDR_SHIFT)
+                          << RUN_VOLT_GROUP_PITCH_SHIFT) |
+                             (element & (RUN_VOLT_GROUP_SIZE - 1U))
                        : element;
         if ((rvrt_artifact_output_mapping_find(&runner->output_view,
                                                expected_axon, &entry,
@@ -166,13 +166,12 @@ runner_decode_voltage_fast_frame(const rvrt_paicore_runner_t *runner,
         return RVRT_CODEC_STATUS_OK;
     }
 
-    const uint32_t group = axon_bit_idx >> RUNNER_VOLTAGE_GROUP_PITCH_SHIFT;
-    const uint32_t within_group =
-        axon_bit_idx & (RUNNER_VOLTAGE_GROUP_PITCH - 1U);
-    const uint32_t element = (group << RUNNER_VOLTAGE_GROUP_SIZE_SHIFT) |
-                             (within_group & (RUNNER_VOLTAGE_LANE_STRIDE - 1U));
-    const uint32_t lane = within_group >> RUNNER_VOLTAGE_LANE_ADDRESS_SHIFT;
-    if ((lane >= RVRT_VOLTAGE_LANE_COUNT) ||
+    const uint32_t group = axon_bit_idx >> RUN_VOLT_GROUP_PITCH_SHIFT;
+    const uint32_t within_group = axon_bit_idx & (RUN_VOLT_GROUP_PITCH - 1U);
+    const uint32_t element = (group << RUN_VOLT_GROUP_SIZE_SHIFT) |
+                             (within_group & (RUN_VOLT_LANE_STRIDE - 1U));
+    const uint32_t lane = within_group >> RUN_VOLT_LANE_ADDR_SHIFT;
+    if ((lane >= RVRT_VOLT_LANE_COUNT) ||
         (element >= runner->output_view.element_count)) {
         return RVRT_CODEC_STATUS_OK;
     }

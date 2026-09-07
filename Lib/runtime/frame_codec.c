@@ -4,45 +4,45 @@
 #include <stddef.h>
 #include <string.h>
 
-#define RVRT_DEBUG_TITLE "rvrt"
+#define FC_LOG_TAG "rvrt"
 
-#define RVRT_WORD_BITS 32U
-#define RVRT_U32_MASK 0xFFFFFFFFULL
+#define FC_WORD_BITS 32U
+#define FC_U32_MASK 0xFFFFFFFFULL
 
-#define RVRT_HDR_OFFSET 60U
-#define RVRT_HDR_MASK 0xFU
-#define RVRT_HDR_WORK_TYPE1 8U
-#define RVRT_HDR_CTRL_TYPE1 12U
-#define RVRT_HDR_CTRL_TYPE2 13U
+#define FC_HDR_OFF 60U
+#define FC_HDR_MASK 0xFU
+#define FC_HDR_WORK 8U
+#define FC_HDR_SYNC 12U
+#define FC_HDR_INIT 13U
 
-#define RVRT_SIGN_MAG6_MIN (-31)
-#define RVRT_SIGN_MAG6_MAX 31
-#define RVRT_SIGN_MAG6_SIGN_BIT 0x20U
-#define RVRT_SIGN_MAG6_MASK 0x3FU
+#define FC_SIGN6_MIN (-31)
+#define FC_SIGN6_MAX 31
+#define FC_SIGN6_BIT 0x20U
+#define FC_SIGN6_MASK 0x3FU
 
-#define RVRT_DEST_XY_OFFSET 54U
-#define RVRT_DEST_X_OFFSET 48U
-#define RVRT_DEST_Y_OFFSET 42U
-#define RVRT_COPY_XY_OFFSET 36U
-#define RVRT_COPY_X_OFFSET 30U
-#define RVRT_COPY_Y_OFFSET 24U
+#define FC_DST_XY_OFF 54U
+#define FC_DST_X_OFF 48U
+#define FC_DST_Y_OFF 42U
+#define FC_COPY_XY_OFF 36U
+#define FC_COPY_X_OFF 30U
+#define FC_COPY_Y_OFF 24U
 
-#define RVRT_CTRL_PAYLOAD_MASK 0xFFFFFFU
+#define FC_CTRL_PAYLOAD_MASK 0xFFFFFFU
 
-#define RVRT_WORK_FRAME_TS_BITS 8U
-#define RVRT_WORK_FRAME_TS_MASK 0xFFU
-#define RVRT_WORK_FRAME_TS_HI_FRAME_OFFSET 60U
-#define RVRT_WORK_FRAME_TS_HI_MASK 0x1U
-#define RVRT_WORK_FRAME_TS_LO_BITS 7U
+#define FC_WF_TS_BITS 8U
+#define FC_WF_TS_MASK 0xFFU
+#define FC_WF_TS_HI_OFF 60U
+#define FC_WF_TS_HI_MASK 0x1U
+#define FC_WF_TS_LO_BITS 7U
 
-#define RVRT_DTYPE_UINT1 1U
-#define RVRT_DTYPE_INT1 2U
-#define RVRT_DTYPE_UINT2 3U
-#define RVRT_DTYPE_INT2 4U
-#define RVRT_DTYPE_UINT4 5U
-#define RVRT_DTYPE_INT4 6U
-#define RVRT_DTYPE_UINT8 7U
-#define RVRT_DTYPE_INT8 8U
+#define FC_DTYPE_UINT1 1U
+#define FC_DTYPE_INT1 2U
+#define FC_DTYPE_UINT2 3U
+#define FC_DTYPE_INT2 4U
+#define FC_DTYPE_UINT4 5U
+#define FC_DTYPE_INT4 6U
+#define FC_DTYPE_UINT8 7U
+#define FC_DTYPE_INT8 8U
 
 typedef struct dtype_info {
     uint8_t bits;
@@ -50,10 +50,10 @@ typedef struct dtype_info {
 } dtype_info_t;
 
 static const dtype_info_t k_dtype_info[] = {
-    [RVRT_DTYPE_UINT1] = {1U, false}, [RVRT_DTYPE_INT1] = {1U, true},
-    [RVRT_DTYPE_UINT2] = {2U, false}, [RVRT_DTYPE_INT2] = {2U, true},
-    [RVRT_DTYPE_UINT4] = {4U, false}, [RVRT_DTYPE_INT4] = {4U, true},
-    [RVRT_DTYPE_UINT8] = {8U, false}, [RVRT_DTYPE_INT8] = {8U, true},
+    [FC_DTYPE_UINT1] = {1U, false}, [FC_DTYPE_INT1] = {1U, true},
+    [FC_DTYPE_UINT2] = {2U, false}, [FC_DTYPE_INT2] = {2U, true},
+    [FC_DTYPE_UINT4] = {4U, false}, [FC_DTYPE_INT4] = {4U, true},
+    [FC_DTYPE_UINT8] = {8U, false}, [FC_DTYPE_INT8] = {8U, true},
 };
 
 /** @brief Collapse artifact-reader failures into the codec status domain. */
@@ -79,19 +79,18 @@ static uint64_t pack_field(uint32_t value, uint32_t offset, uint32_t mask)
 
 static void frame_from_u64(uint64_t value, rvrt_frame_t *frame)
 {
-    frame->high = (uint32_t)(value >> RVRT_WORD_BITS);
-    frame->low = (uint32_t)(value & RVRT_U32_MASK);
+    frame->high = (uint32_t)(value >> FC_WORD_BITS);
+    frame->low = (uint32_t)(value & FC_U32_MASK);
 }
 
 static bool sign_magnitude6(int32_t value, uint32_t *encoded)
 {
-    if ((encoded == NULL) || (value < RVRT_SIGN_MAG6_MIN) ||
-        (value > RVRT_SIGN_MAG6_MAX)) {
+    if ((encoded == NULL) || (value < FC_SIGN6_MIN) || (value > FC_SIGN6_MAX)) {
         return false;
     }
 
     if (value < 0) {
-        *encoded = RVRT_SIGN_MAG6_SIGN_BIT | (uint32_t)(-value);
+        *encoded = FC_SIGN6_BIT | (uint32_t)(-value);
     } else {
         *encoded = (uint32_t)value;
     }
@@ -110,9 +109,9 @@ static bool pack_zxy(const rvrt_artifact_core_offset_t *offset,
         return false;
     }
 
-    *packed = pack_field(xy, RVRT_DEST_XY_OFFSET, RVRT_SIGN_MAG6_MASK) |
-              pack_field(x, RVRT_DEST_X_OFFSET, RVRT_SIGN_MAG6_MASK) |
-              pack_field(y, RVRT_DEST_Y_OFFSET, RVRT_SIGN_MAG6_MASK);
+    *packed = pack_field(xy, FC_DST_XY_OFF, FC_SIGN6_MASK) |
+              pack_field(x, FC_DST_X_OFF, FC_SIGN6_MASK) |
+              pack_field(y, FC_DST_Y_OFF, FC_SIGN6_MASK);
     return true;
 }
 
@@ -126,9 +125,9 @@ static bool pack_copy(const rvrt_artifact_copy_count_t *copy, uint64_t *packed)
         return false;
     }
 
-    *packed = pack_field(xy, RVRT_COPY_XY_OFFSET, RVRT_SIGN_MAG6_MASK) |
-              pack_field(x, RVRT_COPY_X_OFFSET, RVRT_SIGN_MAG6_MASK) |
-              pack_field(y, RVRT_COPY_Y_OFFSET, RVRT_SIGN_MAG6_MASK);
+    *packed = pack_field(xy, FC_COPY_XY_OFF, FC_SIGN6_MASK) |
+              pack_field(x, FC_COPY_X_OFF, FC_SIGN6_MASK) |
+              pack_field(y, FC_COPY_Y_OFF, FC_SIGN6_MASK);
     return true;
 }
 
@@ -144,7 +143,7 @@ static rvrt_codec_status_t frame_dest(uint32_t header,
         return RVRT_CODEC_STATUS_BAD_VALUE;
     }
 
-    *dest = pack_field(header, RVRT_HDR_OFFSET, RVRT_HDR_MASK) | packed_offset |
+    *dest = pack_field(header, FC_HDR_OFF, FC_HDR_MASK) | packed_offset |
             packed_copy;
     return RVRT_CODEC_STATUS_OK;
 }
@@ -161,7 +160,7 @@ build_control_frame(const rvrt_artifact_t *artifact, uint32_t thread_index,
     if ((artifact == NULL) || (frame == NULL)) {
         return RVRT_CODEC_STATUS_NULL_ARGUMENT;
     }
-    if (payload > RVRT_CTRL_PAYLOAD_MASK) {
+    if (payload > FC_CTRL_PAYLOAD_MASK) {
         return RVRT_CODEC_STATUS_BAD_VALUE;
     }
 
@@ -257,7 +256,7 @@ static rvrt_codec_status_t output_address_for_work_frame(
     const rvrt_codec_status_t status = rvrt_output_frame_address(
         view, frame, frame_timestep_out, axon_bit_idx);
     if (status == RVRT_CODEC_STATUS_UNSUPPORTED) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output target_lcn=%u",
+        RV_DEBUG_LOGW(FC_LOG_TAG, "unsupported output target_lcn=%u",
                       (unsigned)view->target_lcn);
     }
     return status;
@@ -276,14 +275,14 @@ build_work1_frame(const rvrt_artifact_input_entry_t *entry, uint32_t timestep,
     if ((entry == NULL) || (frame == NULL)) {
         return RVRT_CODEC_STATUS_NULL_ARGUMENT;
     }
-    if ((entry->target_lcn > RVRT_WORK_FRAME_TARGET_LCN_MAX) ||
-        (entry->addr_axon > RVRT_WORK_FRAME_AX_MASK)) {
+    if ((entry->target_lcn > RVRT_WF_TARGET_LCN_MAX) ||
+        (entry->addr_axon > RVRT_WF_AX_MASK)) {
         return RVRT_CODEC_STATUS_BAD_VALUE;
     }
 
     uint64_t dest = 0U;
-    rvrt_codec_status_t status = frame_dest(
-        RVRT_HDR_WORK_TYPE1, &entry->core_offset, &entry->copy_count, &dest);
+    rvrt_codec_status_t status =
+        frame_dest(FC_HDR_WORK, &entry->core_offset, &entry->copy_count, &dest);
     if (status != RVRT_CODEC_STATUS_OK) {
         return status;
     }
@@ -293,23 +292,21 @@ build_work1_frame(const rvrt_artifact_input_entry_t *entry, uint32_t timestep,
         return RVRT_CODEC_STATUS_BAD_VALUE;
     }
 
-    const uint32_t timestep_capacity =
-        1U << (RVRT_WORK_FRAME_TS_BITS - entry->target_lcn);
+    const uint32_t timestep_capacity = 1U
+                                       << (FC_WF_TS_BITS - entry->target_lcn);
     const uint32_t wrapped_timestep = timestep % timestep_capacity;
     const uint32_t resolved_timestep =
         (wrapped_timestep << entry->target_lcn) + entry->tick_relative;
-    if (resolved_timestep > RVRT_WORK_FRAME_TS_MASK) {
+    if (resolved_timestep > FC_WF_TS_MASK) {
         return RVRT_CODEC_STATUS_BAD_VALUE;
     }
 
     const uint64_t frame_addr =
-        pack_field(resolved_timestep >> RVRT_WORK_FRAME_TS_LO_BITS,
-                   RVRT_WORK_FRAME_TS_HI_FRAME_OFFSET,
-                   RVRT_WORK_FRAME_TS_HI_MASK) |
-        pack_field(resolved_timestep, RVRT_WORK_FRAME_TS_LO_OFFSET,
-                   RVRT_WORK_FRAME_TS_LO_MASK) |
-        pack_field(entry->addr_axon, RVRT_WORK_FRAME_AX_OFFSET,
-                   RVRT_WORK_FRAME_AX_MASK);
+        pack_field(resolved_timestep >> FC_WF_TS_LO_BITS, FC_WF_TS_HI_OFF,
+                   FC_WF_TS_HI_MASK) |
+        pack_field(resolved_timestep, RVRT_WF_TS_LO_OFFSET,
+                   RVRT_WF_TS_LO_MASK) |
+        pack_field(entry->addr_axon, RVRT_WF_AX_OFFSET, RVRT_WF_AX_MASK);
 
     frame_from_u64(dest | frame_addr | (uint64_t)payload, frame);
     return RVRT_CODEC_STATUS_OK;
@@ -335,8 +332,7 @@ rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
                                           uint32_t thread_index,
                                           rvrt_frame_t *frame)
 {
-    return build_control_frame(artifact, thread_index, RVRT_HDR_CTRL_TYPE2, 0U,
-                               frame);
+    return build_control_frame(artifact, thread_index, FC_HDR_INIT, 0U, frame);
 }
 
 rvrt_codec_status_t
@@ -344,7 +340,7 @@ rvrt_build_sync_payload_frame(const rvrt_artifact_t *artifact,
                               uint32_t thread_index, uint32_t sync_payload,
                               rvrt_frame_t *frame)
 {
-    return build_control_frame(artifact, thread_index, RVRT_HDR_CTRL_TYPE1,
+    return build_control_frame(artifact, thread_index, FC_HDR_SYNC,
                                sync_payload, frame);
 }
 
@@ -369,7 +365,7 @@ rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
         return RVRT_CODEC_STATUS_NULL_ARGUMENT;
     }
     if (frame_capacity == 0U) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "input frame capacity is zero");
+        RV_DEBUG_LOGW(FC_LOG_TAG, "input frame capacity is zero");
         return RVRT_CODEC_STATUS_BAD_VALUE;
     }
 
@@ -390,8 +386,7 @@ rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
         bool is_signed = false;
         if (!dtype_bits(entry.dtype, &entry_bits, &is_signed) ||
             (entry_bits != view->bit_width)) {
-            RV_DEBUG_LOGW(RVRT_DEBUG_TITLE,
-                          "unsupported input dtype=%u bit_width=%u",
+            RV_DEBUG_LOGW(FC_LOG_TAG, "unsupported input dtype=%u bit_width=%u",
                           (unsigned)entry.dtype, (unsigned)view->bit_width);
             return RVRT_CODEC_STATUS_UNSUPPORTED;
         }
@@ -402,7 +397,7 @@ rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
         uint8_t payload = 0U;
         if (!encode_payload(input[entry.elem_idx], entry_bits, is_signed,
                             &payload)) {
-            RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "input payload out of range");
+            RV_DEBUG_LOGW(FC_LOG_TAG, "input payload out of range");
             return RVRT_CODEC_STATUS_BAD_VALUE;
         }
 
@@ -466,7 +461,7 @@ static rvrt_codec_status_t decode_data_work_frame(
         return RVRT_CODEC_STATUS_OUT_OF_RANGE;
     }
 
-    const uint32_t payload = frame->low & RVRT_WORK_FRAME_PAYLOAD_MASK;
+    const uint32_t payload = frame->low & RVRT_WF_PAYLOAD_MASK;
     if (!is_signed && ((payload & ~bit_mask(entry_bits)) != 0U)) {
         return RVRT_CODEC_STATUS_OK;
     }
@@ -496,7 +491,7 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
         return RVRT_CODEC_STATUS_OK;
     }
     if (view->kind != RVRT_OUTPUT_DATA) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output kind=%u",
+        RV_DEBUG_LOGW(FC_LOG_TAG, "unsupported output kind=%u",
                       (unsigned)view->kind);
         return RVRT_CODEC_STATUS_UNSUPPORTED;
     }
@@ -504,7 +499,7 @@ rvrt_decode_output_frame(const rvrt_artifact_output_mapping_view_t *view,
     uint32_t entry_bits = 0U;
     bool is_signed = false;
     if (!dtype_bits(view->dtype, &entry_bits, &is_signed)) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported output dtype=%u",
+        RV_DEBUG_LOGW(FC_LOG_TAG, "unsupported output dtype=%u",
                       (unsigned)view->dtype);
         return RVRT_CODEC_STATUS_UNSUPPORTED;
     }
@@ -570,12 +565,12 @@ static rvrt_codec_status_t decode_voltage_work_frame(
     }
 
     if (view->kind != RVRT_OUTPUT_VOLTAGE) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported voltage output kind=%u",
+        RV_DEBUG_LOGW(FC_LOG_TAG, "unsupported voltage output kind=%u",
                       (unsigned)view->kind);
         return RVRT_CODEC_STATUS_UNSUPPORTED;
     }
     if (view->dtype != RVRT_DTYPE_VOLTAGE_INT32) {
-        RV_DEBUG_LOGW(RVRT_DEBUG_TITLE, "unsupported voltage output dtype=%u",
+        RV_DEBUG_LOGW(FC_LOG_TAG, "unsupported voltage output dtype=%u",
                       (unsigned)view->dtype);
         return RVRT_CODEC_STATUS_UNSUPPORTED;
     }
@@ -587,8 +582,8 @@ static rvrt_codec_status_t decode_voltage_work_frame(
     if (status != RVRT_CODEC_STATUS_OK) {
         return status;
     }
-    const uint32_t lane = (axon_bit_idx >> 3U) & (RVRT_VOLTAGE_LANE_COUNT - 1U);
-    const uint32_t base = axon_bit_idx - lane * RVRT_VOLTAGE_LANE_BITS;
+    const uint32_t lane = (axon_bit_idx >> 3U) & (RVRT_VOLT_LANE_COUNT - 1U);
+    const uint32_t base = axon_bit_idx - lane * RVRT_VOLT_LANE_BITS;
     rvrt_artifact_output_entry_t entry = {0};
     bool found = false;
     const rvrt_artifact_status_t artifact_status =
@@ -622,7 +617,7 @@ static rvrt_codec_status_t decode_voltage_work_frame(
 
     return rvrt_store_voltage_lane(
         output, output_index, output_count, state, state_index, state_count,
-        lane, (uint8_t)(frame->low & RVRT_WORK_FRAME_PAYLOAD_MASK), written);
+        lane, (uint8_t)(frame->low & RVRT_WF_PAYLOAD_MASK), written);
 }
 
 rvrt_codec_status_t rvrt_decode_voltage_frame(

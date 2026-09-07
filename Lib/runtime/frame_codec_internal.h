@@ -3,17 +3,17 @@
 
 #include "frame_codec.h"
 
-#define RVRT_WORK_FRAME_TARGET_LCN_MAX 7U
-#define RVRT_WORK_FRAME_TS_HI_WORD_OFFSET 28U
-#define RVRT_WORK_FRAME_TS_LO_OFFSET 17U
-#define RVRT_WORK_FRAME_TS_LO_MASK 0x7FU
-#define RVRT_WORK_FRAME_AX_BITS 9U
-#define RVRT_WORK_FRAME_AX_OFFSET 8U
-#define RVRT_WORK_FRAME_AX_MASK 0x1FFU
-#define RVRT_WORK_FRAME_PAYLOAD_MASK 0xFFU
-#define RVRT_VOLTAGE_LANE_BITS 8U
-#define RVRT_VOLTAGE_LANE_COUNT 4U
-#define RVRT_VOLTAGE_COMPLETE_MASK ((1U << RVRT_VOLTAGE_LANE_COUNT) - 1U)
+#define RVRT_WF_TARGET_LCN_MAX 7U
+#define RVRT_WF_TS_HI_WORD_OFFSET 28U
+#define RVRT_WF_TS_LO_OFFSET 17U
+#define RVRT_WF_TS_LO_MASK 0x7FU
+#define RVRT_WF_AX_BITS 9U
+#define RVRT_WF_AX_OFFSET 8U
+#define RVRT_WF_AX_MASK 0x1FFU
+#define RVRT_WF_PAYLOAD_MASK 0xFFU
+#define RVRT_VOLT_LANE_BITS 8U
+#define RVRT_VOLT_LANE_COUNT 4U
+#define RVRT_VOLT_COMPLETE_MASK ((1U << RVRT_VOLT_LANE_COUNT) - 1U)
 
 static inline rvrt_codec_status_t
 rvrt_output_frame_address(const rvrt_artifact_output_mapping_view_t *view,
@@ -24,20 +24,18 @@ rvrt_output_frame_address(const rvrt_artifact_output_mapping_view_t *view,
         (axon_bit_idx == NULL)) {
         return RVRT_CODEC_STATUS_NULL_ARGUMENT;
     }
-    if (view->target_lcn > RVRT_WORK_FRAME_TARGET_LCN_MAX) {
+    if (view->target_lcn > RVRT_WF_TARGET_LCN_MAX) {
         return RVRT_CODEC_STATUS_UNSUPPORTED;
     }
 
     const uint32_t encoded_timestep =
-        (((frame->high >> RVRT_WORK_FRAME_TS_HI_WORD_OFFSET) & 1U) << 7U) |
-        ((frame->low >> RVRT_WORK_FRAME_TS_LO_OFFSET) &
-         RVRT_WORK_FRAME_TS_LO_MASK);
+        (((frame->high >> RVRT_WF_TS_HI_WORD_OFFSET) & 1U) << 7U) |
+        ((frame->low >> RVRT_WF_TS_LO_OFFSET) & RVRT_WF_TS_LO_MASK);
     const uint32_t frame_axon =
-        (frame->low >> RVRT_WORK_FRAME_AX_OFFSET) & RVRT_WORK_FRAME_AX_MASK;
+        (frame->low >> RVRT_WF_AX_OFFSET) & RVRT_WF_AX_MASK;
     *timestep = encoded_timestep >> view->target_lcn;
-    *axon_bit_idx =
-        ((encoded_timestep << RVRT_WORK_FRAME_AX_BITS) | frame_axon) &
-        ((1U << (RVRT_WORK_FRAME_AX_BITS + view->target_lcn)) - 1U);
+    *axon_bit_idx = ((encoded_timestep << RVRT_WF_AX_BITS) | frame_axon) &
+                    ((1U << (RVRT_WF_AX_BITS + view->target_lcn)) - 1U);
     return RVRT_CODEC_STATUS_OK;
 }
 
@@ -48,7 +46,7 @@ rvrt_store_voltage_lane(int32_t *output, size_t output_index,
                         uint8_t payload, bool *written)
 {
     if ((output_index >= output_count) || (state_index >= state_count) ||
-        (lane >= RVRT_VOLTAGE_LANE_COUNT)) {
+        (lane >= RVRT_VOLT_LANE_COUNT)) {
         return RVRT_CODEC_STATUS_OUT_OF_RANGE;
     }
 
@@ -62,9 +60,9 @@ rvrt_store_voltage_lane(int32_t *output, size_t output_index,
     }
     output[output_index] =
         (int32_t)((uint32_t)output[output_index] |
-                  ((uint32_t)payload << (lane * RVRT_VOLTAGE_LANE_BITS)));
+                  ((uint32_t)payload << (lane * RVRT_VOLT_LANE_BITS)));
     slot->received_mask |= lane_mask;
-    if (slot->received_mask == RVRT_VOLTAGE_COMPLETE_MASK) {
+    if (slot->received_mask == RVRT_VOLT_COMPLETE_MASK) {
         slot->received_mask = 0U;
         if (written != NULL) {
             *written = true;
