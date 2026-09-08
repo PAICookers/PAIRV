@@ -1,5 +1,3 @@
-#include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -44,10 +42,10 @@ static int fail_artifact(const char *stage, rvrt_artifact_status_t status)
     return 1;
 }
 
-static int fail_runtime(const char *stage, rvrt_status_t status)
+static int fail_codec(const char *stage, rvrt_codec_status_t status)
 {
     printf("%s: %s failed: %s\r\n", APP_TITLE, stage,
-           rvrt_status_string(status));
+           rvrt_codec_status_string(status));
     return 1;
 }
 
@@ -68,10 +66,7 @@ int main(void)
     const size_t artifact_size =
         binary_size(_binary_generated_compile_artifacts_bin_size);
     const uint32_t workspace_capacity =
-        (RVRT_MAX_WORKSPACE_FRAMES <
-         (uint32_t)(sizeof(g_workspace) / sizeof(g_workspace[0])))
-            ? RVRT_MAX_WORKSPACE_FRAMES
-            : (uint32_t)(sizeof(g_workspace) / sizeof(g_workspace[0]));
+        (uint32_t)(sizeof(g_workspace) / sizeof(g_workspace[0]));
 
     /* 解析 artifact，并取得同一 thread 的运行参数与 I/O mapping */
     rvrt_artifact_t artifact = {0};
@@ -101,9 +96,11 @@ int main(void)
 
     /* 在访问 PAICORE 前确认 artifact 与应用静态资源属于同一模型 */
     if ((runtime.timesteps != APP_TIMESTEPS) ||
-        (runtime.decode_mode != RVRT_DECODE_MODE_STREAM) ||
-        (runtime.sync_steps != runtime.tick_depth + runtime.timesteps - 1U) ||
+        (runtime.output_time_encoding != RVRT_OUTPUT_TIME_ENCODING_STREAM) ||
+        (runtime.completion_sync_timestep !=
+         runtime.pipeline_latency + runtime.timesteps - 1U) ||
         (input_view.entry_count != APP_INPUT_BYTES) ||
+        (input_view.element_count != APP_INPUT_BYTES) ||
         (output_view.kind != RVRT_OUTPUT_DATA) ||
         (output_view.entry_count != APP_OUTPUT_ELEMENTS) ||
         (output_view.element_count != APP_OUTPUT_ELEMENTS)) {
@@ -148,25 +145,26 @@ int main(void)
             }
         }
 
-        /* 使用 artifact 的 sync_steps 推进完整流水线。 */
+        /* 使用 artifact 的 completion_sync_timestep 推进完整流水线。 */
         const rvrt_frame_t *rx_frames = NULL;
         uint32_t rx_frame_count = 0U;
-        session_status = rvrt_session_sync_wait(
-            &session, runtime.sync_steps, APP_TIMEOUT_MS, &rx_frames,
-            &rx_frame_count);
+        session_status = rvrt_session_sync_wait_until(
+            &session, runtime.completion_sync_timestep, APP_TIMEOUT_MS,
+            &rx_frames, &rx_frame_count);
         if (session_status != RVRT_SESSION_OK) {
             return fail_session("sync", session_status);
         }
 
         /* Runtime 将有效 STREAM DATA 归一化为 [应用时间步][输出元素]。 */
         uint8_t output[APP_TIMESTEPS * APP_OUTPUT_ELEMENTS] = {0};
-        rvrt_status_t runtime_status = rvrt_decode_output_frames(
-            &output_view, &runtime, rx_frames, rx_frame_count, output,
-            sizeof(output));
-        if (runtime_status != RVRT_STATUS_OK) {
-            return fail_runtime("decode", runtime_status);
+        rvrt_codec_status_t codec_status =
+            rvrt_decode_output_frames(&output_view, &runtime, rx_frames,
+                                      rx_frame_count, output, sizeof(output));
+        if (codec_status != RVRT_CODEC_STATUS_OK) {
+            return fail_codec("decode", codec_status);
         }
-        if (memcmp(output, mnist_expected_output[sample], sizeof(output)) != 0) {
+        if (memcmp(output, mnist_expected_output[sample], sizeof(output)) !=
+            0) {
             printf("%s: sample=%u output mismatch\r\n", APP_TITLE,
                    (unsigned)sample);
             return 1;
