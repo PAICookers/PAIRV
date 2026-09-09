@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate snn_head_params.c from the INT8 QAT export-state package.
 
 CPU-side operators (LayerNorm / quantize / dequantize) need only:
@@ -14,18 +13,15 @@ into a C source that defines the extern symbols declared in
 snn_head_internal.h. Re-run it whenever the export package is refreshed.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
 import torch
 
-DEFAULT_PT = (
-    "/mnt/work/linjiamu/VLA/snnhead_lif_rdfalse_int8qat_headonly_"
-    "s1000_q9995_bc_20260701/snn_head_int8_quant_export_state.pt"
-)
-OUT_C = Path(__file__).resolve().parent / "snn_head_params.c"
+MODEL_NAME = "snnhead_lif_rdfalse_int8qat_headonly_s1000_q9995_bc_20260701"
+MODEL_DIR = Path(__file__).resolve().parents[3].parent / "Applications" / MODEL_NAME
+DEFAULT_PT = MODEL_DIR / MODEL_NAME / "snn_head_int8_quant_export_state.pt"
+OUT_C = Path(__file__).resolve().parent / "src" / "snn_head_params.c"
 
 # (C symbol, state-dict key, expected length or None for scalar)
 LN_ARRAYS = [
@@ -41,8 +37,14 @@ LN_ARRAYS = [
 
 SCALARS = [
     ("snn_head_fc1_activation_scale", "model.fc1.activation_scale"),
-    ("snn_head_block0_activation_scale", "model.mlp_resnet_blocks.0.ffn.1.activation_scale"),
-    ("snn_head_block1_activation_scale", "model.mlp_resnet_blocks.1.ffn.1.activation_scale"),
+    (
+        "snn_head_block0_activation_scale",
+        "model.mlp_resnet_blocks.0.ffn.1.activation_scale",
+    ),
+    (
+        "snn_head_block1_activation_scale",
+        "model.mlp_resnet_blocks.1.ffn.1.activation_scale",
+    ),
     ("snn_head_fc2_activation_scale", "model.fc2.activation_scale"),
     ("snn_head_fc3_activation_scale", "model.fc3.activation_scale"),
 ]
@@ -55,15 +57,38 @@ OUTPUT_SCALES = [
 
 
 def fmt_float(x: float) -> str:
-    """Emit a float32-round-trip-exact C float literal (9 sig digits + 'f')."""
+    """Format a float32-round-trip-safe C literal.
+
+    Args:
+        x: Value to round to IEEE-754 binary32.
+
+    Returns:
+        C literal with nine significant digits and an `f` suffix.
+    """
     v = float(torch.tensor(x, dtype=torch.float32).item())
-    s = "%.9g" % v
-    if ("." not in s) and ("e" not in s) and ("E" not in s) and ("inf" not in s) and ("nan" not in s):
+    s = f"{v:.9g}"
+    if (
+        ("." not in s)
+        and ("e" not in s)
+        and ("E" not in s)
+        and ("inf" not in s)
+        and ("nan" not in s)
+    ):
         s += ".0"
     return s + "f"
 
 
 def emit_array(name: str, dim_macro: str, values) -> str:
+    """Render one generated parameter array.
+
+    Args:
+        name: C symbol name.
+        dim_macro: Dimension macro used in the declaration.
+        values: Parameter values in declaration order.
+
+    Returns:
+        Complete C array definition.
+    """
     lines = [f"const float {name}[{dim_macro}] SNN_HEAD_PARAM_DATA = {{"]
     row = []
     for i, v in enumerate(values):
@@ -78,11 +103,27 @@ def emit_array(name: str, dim_macro: str, values) -> str:
 
 
 def dim_macro_for(length: int) -> str:
-    return {768: "SNN_HEAD_INPUT_DIM", 1536: "SNN_HEAD_HIDDEN_DIM", 7: "SNN_HEAD_ACTION_DIM"}[length]
+    """Map a supported tensor width to its public C dimension macro.
+
+    Args:
+        length: Number of tensor elements.
+
+    Returns:
+        Matching SNN Head dimension macro.
+
+    Raises:
+        KeyError: If the export contains an unsupported dimension.
+    """
+    return {
+        768: "SNN_HEAD_INPUT_DIM",
+        1536: "SNN_HEAD_HIDDEN_DIM",
+        7: "SNN_HEAD_ACTION_DIM",
+    }[length]
 
 
 def main() -> int:
-    pt_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PT
+    """Generate `snn_head_params.c` and return a process status."""
+    pt_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PT
     state = torch.load(pt_path, map_location="cpu", weights_only=False)
 
     out = []
@@ -91,14 +132,22 @@ def main() -> int:
     out.append(f" * Source: {Path(pt_path).name}")
     out.append(" *")
     out.append(" * CPU-side SNN Head parameters (LayerNorm affine, activation_scale,")
-    out.append(" * per-output-channel output_scale). All values are the frozen INT8 QAT")
-    out.append(" * products; regenerate from the export package rather than editing here.")
+    out.append(
+        " * per-output-channel output_scale). All values are the frozen INT8 QAT"
+    )
+    out.append(
+        " * products; regenerate from the export package rather than editing here."
+    )
     out.append(" */")
     out.append('#include "snn_head_internal.h"')
     out.append("")
-    out.append("/* Large constants live in flash (.large_const_data), never in DLM/RAM. */")
-    out.append("#define SNN_HEAD_PARAM_DATA "
-               "__attribute__((section(\".large_const_data\"), aligned(8)))")
+    out.append(
+        "/* Large constants live in flash (.large_const_data), never in DLM/RAM. */"
+    )
+    out.append(
+        "#define SNN_HEAD_PARAM_DATA "
+        '__attribute__((section(".large_const_data"), aligned(8)))'
+    )
     out.append("")
 
     # LayerNorm affine arrays
@@ -119,12 +168,18 @@ def main() -> int:
         stored = state[f"{prefix}.output_scale"].detach().float().reshape(-1)
         act = state[f"{prefix}.activation_scale"].detach().float().reshape(())
         wsc = state[f"{prefix}.weight_scale"].detach().float().reshape(-1)
-        recomputed = (act * wsc)
+        recomputed = act * wsc
         max_diff = (stored - recomputed).abs().max().item()
-        assert stored.numel() == length, f"{prefix}.output_scale: {stored.numel()} != {length}"
-        assert max_diff < 1e-9, f"{prefix}: output_scale != act*weight_scale (max_diff={max_diff})"
-        out.append(f"/* {prefix}.output_scale == activation_scale * weight_scale "
-                   f"(verified max_diff={max_diff:.3e}) */")
+        assert stored.numel() == length, (
+            f"{prefix}.output_scale: {stored.numel()} != {length}"
+        )
+        assert max_diff < 1e-9, (
+            f"{prefix}: output_scale != act*weight_scale (max_diff={max_diff})"
+        )
+        out.append(
+            f"/* {prefix}.output_scale == activation_scale * weight_scale "
+            f"(verified max_diff={max_diff:.3e}) */"
+        )
         out.append(emit_array(name, dim_macro_for(length), stored.tolist()))
         out.append("")
 

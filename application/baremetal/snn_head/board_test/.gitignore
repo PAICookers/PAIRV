@@ -1,9 +1,0 @@
-/generated/
-*.o
-*.elf
-*.map
-*.dump
-*.dasm
-*.verilog
-*.hex
-*.bin

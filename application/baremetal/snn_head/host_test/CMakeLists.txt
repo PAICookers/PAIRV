@@ -1,23 +1,26 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(snn_head_host_layer_test LANGUAGES C CXX)
+project(snn_head_host_tests LANGUAGES C CXX)
 
 # host_test/ -> snn_head/ -> baremetal/ -> application/ -> repo root
 set(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../..")
 set(SNN_HEAD_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
+set(SNN_HEAD_SRC_DIR "${SNN_HEAD_DIR}/src")
+set(SNN_HEAD_INCLUDE_DIR "${SNN_HEAD_DIR}/include")
 
 add_executable(snn_head_host_layer_test
   run_layers_host.c
   host_noc_mock.c
   host_artifact_shim.c
   # 被测：五层实现 + 核心（共享 buffer/helper）+ 参数
-  "${SNN_HEAD_DIR}/snn_head.c"
-  "${SNN_HEAD_DIR}/snn_head_fc1_lif.c"
-  "${SNN_HEAD_DIR}/snn_head_block_lif.c"
-  "${SNN_HEAD_DIR}/snn_head_fc2.c"
-  "${SNN_HEAD_DIR}/snn_head_fc3.c"
-  "${SNN_HEAD_DIR}/snn_head_params.c"
-  "${SNN_HEAD_DIR}/board_test/snn_head_golden.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_profile.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc1_lif.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_block_lif.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc2.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc3.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_params.c"
+  "${SNN_HEAD_DIR}/board_test/golden/snn_head_golden.c"
   # CPU 算子
   "${REPO_ROOT}/Lib/nn_layernorm.c"
   "${REPO_ROOT}/Lib/nn_quant.c"
@@ -25,7 +28,7 @@ add_executable(snn_head_host_layer_test
   # runtime 栈
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
-  "${REPO_ROOT}/Lib/runtime/managed_packet.c"
+  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
   "${REPO_ROOT}/Lib/runtime/session.c"
   "${REPO_ROOT}/Lib/runtime/session_io.c"
 )
@@ -33,8 +36,9 @@ add_executable(snn_head_host_layer_test
 target_compile_features(snn_head_host_layer_test PRIVATE c_std_17 cxx_std_17)
 
 target_include_directories(snn_head_host_layer_test PRIVATE
-  "${SNN_HEAD_DIR}"
-  "${SNN_HEAD_DIR}/board_test"
+  "${SNN_HEAD_INCLUDE_DIR}"
+  "${SNN_HEAD_SRC_DIR}"
+  "${SNN_HEAD_DIR}/board_test/golden"
   "${REPO_ROOT}/tests/runtime/mocks"   # evalsoc_noc.h / nuclei_sdk_soc.h host shim
   "${REPO_ROOT}/Lib"
   "${REPO_ROOT}/Lib/runtime"
@@ -42,7 +46,9 @@ target_include_directories(snn_head_host_layer_test PRIVATE
 )
 
 target_compile_definitions(snn_head_host_layer_test PRIVATE
-  SNN_HEAD_FIXTURE_DIR="${SNN_HEAD_DIR}/fixtures"
+  SNN_HEAD_ASSET_DIR="${SNN_HEAD_DIR}/assets"
+  SNN_HEAD_TIMING=1
+  RVRT_ENABLE_STATS=1
 )
 
 # 关键：ASan + UBSan 抓越界/覆盖/未对齐；-no-pie 让 --defsym 绝对符号生效。
@@ -58,37 +64,61 @@ target_compile_options(snn_head_host_layer_test PRIVATE ${SNN_HEAD_SAN_FLAGS})
 target_link_options(snn_head_host_layer_test PRIVATE
   -fsanitize=address,undefined
   -no-pie
-  -Wl,--defsym,snn_head_fc1_lif_artifact_size=1301844
-  -Wl,--defsym,snn_head_block0_lif_artifact_size=2535884
-  -Wl,--defsym,snn_head_block1_lif_artifact_size=2535884
-  -Wl,--defsym,snn_head_fc2_artifact_size=2536040
-  -Wl,--defsym,snn_head_fc3_artifact_size=1
+  -Wl,--defsym,snn_head_fc1_lif_artifact_size=1310992
+  -Wl,--defsym,snn_head_block0_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_block1_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_fc2_artifact_size=2535968
+  -Wl,--defsym,snn_head_fc3_artifact_size=85088
+)
+
+add_executable(snn_head_host_artifact_test
+  test_artifact_contracts.c
+  "${REPO_ROOT}/Lib/debug.c"
+  "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
+  "${REPO_ROOT}/Lib/runtime/frame_codec.c"
+)
+
+target_compile_features(snn_head_host_artifact_test PRIVATE c_std_17 cxx_std_17)
+target_include_directories(snn_head_host_artifact_test PRIVATE
+  "${REPO_ROOT}/Lib"
+  "${REPO_ROOT}/Lib/runtime"
+  "${REPO_ROOT}/third_party/flatbuffers/include"
+)
+target_compile_definitions(snn_head_host_artifact_test PRIVATE
+  SNN_HEAD_ASSET_DIR="${SNN_HEAD_DIR}/assets"
+)
+target_compile_options(snn_head_host_artifact_test PRIVATE ${SNN_HEAD_SAN_FLAGS})
+target_link_options(snn_head_host_artifact_test PRIVATE
+  -fsanitize=address,undefined
+  -no-pie
 )
 
 enable_testing()
 add_test(NAME snn_head_host_layer_test COMMAND snn_head_host_layer_test)
+add_test(NAME snn_head_host_artifact_test COMMAND snn_head_host_artifact_test)
 
 # ---------------------------------------------------------------------------
-# 第二个可执行：choreography 一致性校验（跑真实层 + 哨兵回显 + 逐元素断言）。
-# 与 codec 压测共用 mock/shim/被测源；额外加 C++ 辅助（artifact 补丁 + 输出映射枚举）。
+# choreography 一致性校验（跑真实层 + 哨兵回显 + 逐元素断言）。
+# 与 codec 压测共用 mock/shim/被测源；额外加 C++ 输出映射枚举辅助。
 # ---------------------------------------------------------------------------
 add_executable(snn_head_host_choreo_test
   run_choreo_host.c
   host_noc_mock.c
   host_artifact_shim.c
   host_artifact_support.cpp
-  "${SNN_HEAD_DIR}/snn_head.c"
-  "${SNN_HEAD_DIR}/snn_head_fc1_lif.c"
-  "${SNN_HEAD_DIR}/snn_head_block_lif.c"
-  "${SNN_HEAD_DIR}/snn_head_fc2.c"
-  "${SNN_HEAD_DIR}/snn_head_fc3.c"
-  "${SNN_HEAD_DIR}/snn_head_params.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_profile.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc1_lif.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_block_lif.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc2.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc3.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_params.c"
   "${REPO_ROOT}/Lib/nn_layernorm.c"
   "${REPO_ROOT}/Lib/nn_quant.c"
   "${REPO_ROOT}/Lib/debug.c"
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
-  "${REPO_ROOT}/Lib/runtime/managed_packet.c"
+  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
   "${REPO_ROOT}/Lib/runtime/session.c"
   "${REPO_ROOT}/Lib/runtime/session_io.c"
 )
@@ -96,8 +126,9 @@ add_executable(snn_head_host_choreo_test
 target_compile_features(snn_head_host_choreo_test PRIVATE c_std_17 cxx_std_17)
 
 target_include_directories(snn_head_host_choreo_test PRIVATE
-  "${SNN_HEAD_DIR}"
-  "${SNN_HEAD_DIR}/board_test"
+  "${SNN_HEAD_INCLUDE_DIR}"
+  "${SNN_HEAD_SRC_DIR}"
+  "${SNN_HEAD_DIR}/board_test/golden"
   "${REPO_ROOT}/tests/runtime/mocks"
   "${REPO_ROOT}/Lib"
   "${REPO_ROOT}/Lib/runtime"
@@ -105,7 +136,9 @@ target_include_directories(snn_head_host_choreo_test PRIVATE
 )
 
 target_compile_definitions(snn_head_host_choreo_test PRIVATE
-  SNN_HEAD_FIXTURE_DIR="${SNN_HEAD_DIR}/fixtures"
+  SNN_HEAD_ASSET_DIR="${SNN_HEAD_DIR}/assets"
+  SNN_HEAD_TIMING=1
+  RVRT_ENABLE_STATS=1
 )
 
 target_compile_options(snn_head_host_choreo_test PRIVATE ${SNN_HEAD_SAN_FLAGS})
@@ -113,16 +146,71 @@ target_compile_options(snn_head_host_choreo_test PRIVATE ${SNN_HEAD_SAN_FLAGS})
 target_link_options(snn_head_host_choreo_test PRIVATE
   -fsanitize=address,undefined
   -no-pie
-  -Wl,--defsym,snn_head_fc1_lif_artifact_size=1301844
-  -Wl,--defsym,snn_head_block0_lif_artifact_size=2535884
-  -Wl,--defsym,snn_head_block1_lif_artifact_size=2535884
-  -Wl,--defsym,snn_head_fc2_artifact_size=2536040
-  -Wl,--defsym,snn_head_fc3_artifact_size=1
+  -Wl,--defsym,snn_head_fc1_lif_artifact_size=1310992
+  -Wl,--defsym,snn_head_block0_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_block1_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_fc2_artifact_size=2535968
+  -Wl,--defsym,snn_head_fc3_artifact_size=85088
 )
 
 add_test(NAME snn_head_host_choreo_test COMMAND snn_head_host_choreo_test)
 
+add_executable(snn_head_host_uart_test
+  run_uart_host.c
+  host_noc_mock.c
+  host_artifact_shim.c
+  "${SNN_HEAD_SRC_DIR}/snn_head_uart.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_profile.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc1_lif.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_block_lif.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc2.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_fc3.c"
+  "${SNN_HEAD_SRC_DIR}/snn_head_params.c"
+  "${REPO_ROOT}/Lib/nn_layernorm.c"
+  "${REPO_ROOT}/Lib/nn_quant.c"
+  "${REPO_ROOT}/Lib/debug.c"
+  "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
+  "${REPO_ROOT}/Lib/runtime/frame_codec.c"
+  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
+  "${REPO_ROOT}/Lib/runtime/session.c"
+  "${REPO_ROOT}/Lib/runtime/session_io.c"
+)
+
+target_compile_features(snn_head_host_uart_test PRIVATE c_std_17 cxx_std_17)
+
+target_include_directories(snn_head_host_uart_test PRIVATE
+  "${SNN_HEAD_INCLUDE_DIR}"
+  "${SNN_HEAD_SRC_DIR}"
+  "${REPO_ROOT}/tests/runtime/mocks"
+  "${REPO_ROOT}/Lib"
+  "${REPO_ROOT}/Lib/runtime"
+  "${REPO_ROOT}/third_party/flatbuffers/include"
+)
+
+target_compile_definitions(snn_head_host_uart_test PRIVATE
+  SNN_HEAD_ASSET_DIR="${SNN_HEAD_DIR}/assets"
+  SNN_HEAD_TIMING=1
+  RVRT_ENABLE_STATS=1
+  RV_DEBUG_ENABLE_LOGGING=1
+)
+
+target_compile_options(snn_head_host_uart_test PRIVATE ${SNN_HEAD_SAN_FLAGS})
+
+target_link_options(snn_head_host_uart_test PRIVATE
+  -fsanitize=address,undefined
+  -no-pie
+  -Wl,--defsym,snn_head_fc1_lif_artifact_size=1310992
+  -Wl,--defsym,snn_head_block0_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_block1_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_fc2_artifact_size=2535968
+  -Wl,--defsym,snn_head_fc3_artifact_size=85088
+)
+
+add_test(NAME snn_head_host_uart_test COMMAND snn_head_host_uart_test)
+
 add_custom_target(run
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-  DEPENDS snn_head_host_layer_test snn_head_host_choreo_test
+  DEPENDS snn_head_host_layer_test snn_head_host_artifact_test
+          snn_head_host_choreo_test snn_head_host_uart_test
 )

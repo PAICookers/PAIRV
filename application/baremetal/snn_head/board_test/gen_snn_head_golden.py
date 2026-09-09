@@ -1,8 +1,9 @@
-#!/usr/bin/env python3
-"""Generate snn_head_golden.c: 逐层上板测试的 golden 中间结果。
+"""Generate snn_head_golden.c with deployed golden data for board tests.
 
-从 snn_head_int8_quant_export_state.pt 里冻结的量化产物【直接】重建 INT8 golden
-runtime（无需浮点权重），对一个固定确定性输入前向，抓取每个层边界张量，其表示与 C
+从 snn_head_int8_quant_export_state.pt 重建 CPU 边界算子，并用当前 PAIBox
+lowering 得到的 PAICORE LIF 参数计算三层 spike。不能直接使用 QAT runtime 的
+``beta_float``：部署会把 beta 映射到硬件格点，并把严格 ``V > threshold`` 映射为
+硬件的 inclusive threshold。对一个固定确定性输入前向，抓取各层边界张量，其表示与 C
 tensor_workspace 完全一致：
 
   snn_head_golden_input      x             float32[8][768]
@@ -17,22 +18,24 @@ tensor_workspace 完全一致：
 
 导出包刷新后重跑本脚本即可。生成的 .c 会整体覆盖占位版本并置 ready=1。
 """
-from __future__ import annotations
 
 import argparse
 import importlib.util
 from pathlib import Path
 
+import snntorch as snn
 import torch
-import torch.nn as nn
+from paibox.paiir import torch_to_paiir
+from paibox.paiir.ir.op_node import StandaloneActOp
+from paicorelib import LeakMultiMode, ThresholdNegMode, ThresholdPosMode
+from torch import nn
 
-DEFAULT_PKG_DIR = Path(
-    "/mnt/work/linjiamu/VLA/"
-    "snnhead_lif_rdfalse_int8qat_headonly_s1000_q9995_bc_20260701"
-)
-DEFAULT_PT = DEFAULT_PKG_DIR / "snn_head_int8_quant_export_state.pt"
-NETCODE = DEFAULT_PKG_DIR / "network_code" / "snntorch_lif_int8_quant.py"
-OUT_C = Path(__file__).resolve().parent / "snn_head_golden.c"
+MODEL_NAME = "snnhead_lif_rdfalse_int8qat_headonly_s1000_q9995_bc_20260701"
+MODEL_DIR = Path(__file__).resolve().parents[4].parent / "Applications" / MODEL_NAME
+EXPORT_DIR = MODEL_DIR / MODEL_NAME
+DEFAULT_PT = EXPORT_DIR / "snn_head_int8_quant_export_state.pt"
+NETCODE = EXPORT_DIR / "network_code" / "snntorch_lif_int8_quant.py"
+OUT_C = Path(__file__).resolve().parent / "golden" / "snn_head_golden.c"
 
 TIMESTEPS = 8
 INPUT_DIM = 768
@@ -40,7 +43,110 @@ HIDDEN_DIM = 1536
 ACTION_DIM = 7
 
 
+class DeployedLeakyRuntime:
+    """Minimal integer PAICORE LIF reference for the board-test boundaries."""
+
+    def __init__(self, beta: torch.Tensor, threshold: torch.Tensor, size: int):
+        """Build a LIF reference from the parameters produced by lowering.
+
+        Args:
+            beta: QAT leak parameter consumed by PAIBox lowering.
+            threshold: Integer-domain firing threshold from the export state.
+            size: Number of neurons in the layer output.
+        """
+        source = snn.Leaky(
+            beta=beta,
+            threshold=threshold.to(torch.float32),
+            reset_mechanism="subtract",
+            reset_delay=False,
+            init_hidden=True,
+            output=False,
+            surrogate_disable=True,
+        )
+        graph = torch_to_paiir(nn.Sequential(source), torch.zeros(1, size), strict=True)
+        acts = [
+            node.act
+            for node in graph.nodes.values()
+            if isinstance(node, StandaloneActOp)
+        ]
+        if len(acts) != 1:
+            raise RuntimeError(f"expected one deployed LIF node, got {len(acts)}")
+        act = acts[0]
+        self.threshold = torch.as_tensor(act.thres_pos, dtype=torch.int64).reshape(-1)
+        self.negative_threshold = torch.as_tensor(
+            act.thres_neg, dtype=torch.int64
+        ).reshape(-1)
+        self.positive_mode = torch.as_tensor(
+            act.thres_pos_mode, dtype=torch.int64
+        ).reshape(-1)
+        self.negative_mode = torch.as_tensor(
+            act.thres_neg_mode, dtype=torch.int64
+        ).reshape(-1)
+        self.mode = torch.as_tensor(act.leak_multi_mode, dtype=torch.int64).reshape(-1)
+        self.shift = torch.as_tensor(act.leak_tau, dtype=torch.int64).reshape(-1)
+        if any(
+            value.numel() not in (1, size)
+            for value in (
+                self.threshold,
+                self.negative_threshold,
+                self.positive_mode,
+                self.negative_mode,
+                self.mode,
+                self.shift,
+            )
+        ):
+            raise RuntimeError("deployed LIF parameters do not match output width")
+        self.threshold = self.threshold.expand(size)
+        self.negative_threshold = self.negative_threshold.expand(size)
+        self.positive_mode = self.positive_mode.expand(size)
+        self.negative_mode = self.negative_mode.expand(size)
+        self.mode = self.mode.expand(size)
+        self.shift = self.shift.expand(size)
+        self.mem: torch.Tensor | None = None
+
+    def __call__(self, acc: torch.Tensor) -> torch.Tensor:
+        """Advance membrane state and return one timestep of spike output.
+
+        Args:
+            acc: Integer accumulator values for the current timestep.
+
+        Returns:
+            Float32 zero/one spikes after threshold, reset, and leak.
+        """
+        if self.mem is None:
+            self.mem = torch.zeros_like(acc, dtype=torch.int64)
+        self.mem += acc.to(torch.int64)
+        self.mem = torch.where(
+            self.positive_mode == int(ThresholdPosMode.CEILING),
+            torch.minimum(self.mem, self.threshold),
+            self.mem,
+        )
+        self.mem = torch.where(
+            self.negative_mode == int(ThresholdNegMode.FLOOR),
+            torch.maximum(self.mem, self.negative_threshold),
+            self.mem,
+        )
+        spike = self.mem >= self.threshold
+        self.mem -= spike.to(torch.int64) * self.threshold
+
+        # PAICORE's post-compare leak uses either direct shift or retention.
+        shifted = self.mem >> (-self.shift)
+        retained = self.mem - shifted
+        self.mem = torch.where(
+            self.mode == int(LeakMultiMode.ENABLE), retained, shifted
+        )
+        return spike.to(torch.float32)
+
+
 def load_runtime_module(path: Path):
+    """Load the exported quantized runtime module from an explicit file.
+
+    Args:
+        path: Python source generated with the model export.
+
+    Returns:
+        Imported module containing the quantized runtime classes.
+    """
     spec = importlib.util.spec_from_file_location("snntorch_lif_int8_quant", str(path))
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -49,7 +155,15 @@ def load_runtime_module(path: Path):
 
 
 def build_model(state: dict, M):
-    """直接用量化产物重建 QuantizedMLPResNet（对齐 build_quantized_head_from_state）。"""
+    """Rebuild `QuantizedMLPResNet` directly from frozen export tensors.
+
+    Args:
+        state: Exported QAT state dictionary.
+        M: Dynamically loaded quantized runtime module.
+
+    Returns:
+        Reconstructed quantized SNN Head model.
+    """
     QLR = M.QuantizedLinearRuntime
     QLK = M.QuantizedLeakyRuntime
 
@@ -112,24 +226,48 @@ def build_model(state: dict, M):
 
 
 def run_capture(model, x: torch.Tensor):
-    """复刻 QuantizedMLPResNet.forward，逐 timestep 抓每层边界张量（batch=1）。"""
-    model.reset_state()
+    """Capture layer boundaries using deployed PAICore LIF semantics.
+
+    Args:
+        model: Reconstructed quantized SNN Head model.
+        x: Input tensor with shape `[1, 8, 768]`.
+
+    Returns:
+        The fc1, block0, block1, fc2, and fc3 boundary tensors, each laid out
+        as `[timestep, feature]` for direct comparison with the C workspace.
+    """
+    lif_in = DeployedLeakyRuntime(
+        model.lif_in.beta, model.lif_in.threshold_int32, HIDDEN_DIM
+    )
+    block0_lif = DeployedLeakyRuntime(
+        model.mlp_resnet_blocks[0].lif.beta,
+        model.mlp_resnet_blocks[0].lif.threshold_int32,
+        HIDDEN_DIM,
+    )
+    block1_lif = DeployedLeakyRuntime(
+        model.mlp_resnet_blocks[1].lif.beta,
+        model.mlp_resnet_blocks[1].lif.threshold_int32,
+        HIDDEN_DIM,
+    )
     fc1o, b0o, b1o, fc2o, acto = [], [], [], [], []
     with torch.no_grad():
         for t in range(x.shape[1]):
             xs = x[:, t, :]
             o = model.layer_norm1(xs)
             _, acc = model.fc1(o, return_int=True)
-            spk = model.lif_in(acc)
+            spk = lif_in(acc)
             fc1o.append(spk)
-            o = model.mlp_resnet_blocks[0](spk)
+            block0 = model.mlp_resnet_blocks[0]
+            _, acc = block0.linear(block0.layer_norm(spk), return_int=True)
+            o = block0_lif(acc)
             b0o.append(o)
-            o = model.mlp_resnet_blocks[1](o)
+            block1 = model.mlp_resnet_blocks[1]
+            _, acc = block1.linear(block1.layer_norm(o), return_int=True)
+            o = block1_lif(acc)
             b1o.append(o)
             o = model.layer_norm2(o)
             _, acc2 = model.fc2(o, return_int=True)
-            model.li_out(acc2)
-            mem = model.li_out.mem_float()
+            mem = acc2.float() * model.fc2.output_scale
             fc2o.append(mem)
             acto.append(model.fc3(mem))
 
@@ -140,15 +278,37 @@ def run_capture(model, x: torch.Tensor):
 
 
 def fmt_float(x: float) -> str:
+    """Format one value as a float32-round-trip-safe C literal.
+
+    Args:
+        x: Value to round to IEEE-754 binary32.
+
+    Returns:
+        C literal with enough significant digits and an `f` suffix.
+    """
     v = float(torch.tensor(x, dtype=torch.float32).item())
-    s = "%.9g" % v
-    if ("." not in s) and ("e" not in s) and ("E" not in s) and ("inf" not in s) \
-            and ("nan" not in s):
+    s = f"{v:.9g}"
+    if (
+        ("." not in s)
+        and ("e" not in s)
+        and ("E" not in s)
+        and ("inf" not in s)
+        and ("nan" not in s)
+    ):
         s += ".0"
     return s + "f"
 
 
 def emit_array(name: str, values: torch.Tensor) -> str:
+    """Render one generated Flash-resident float array.
+
+    Args:
+        name: C symbol name.
+        values: Tensor to flatten in row-major order.
+
+    Returns:
+        Complete C array definition.
+    """
     flat = values.reshape(-1).tolist()
     lines = [f"SNN_HEAD_GOLDEN_DATA const float {name}[{len(flat)}] = {{"]
     row = []
@@ -162,12 +322,17 @@ def emit_array(name: str, values: torch.Tensor) -> str:
 
 
 def main() -> int:
+    """Generate all board-test boundary tensors and return a process status."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--pt", type=Path, default=DEFAULT_PT)
     ap.add_argument("--netcode", type=Path, default=NETCODE)
-    ap.add_argument("--input", type=Path, default=None,
-                    help="可选：加载真实输入 [8,768] 或 [1,8,768]（.npy/.pt）替代 randn")
+    ap.add_argument(
+        "--input",
+        type=Path,
+        default=None,
+        help="可选：加载真实输入 [8,768] 或 [1,8,768]（.npy/.pt）替代 randn",
+    )
     ap.add_argument("--out", type=Path, default=OUT_C)
     args = ap.parse_args()
 
@@ -178,6 +343,7 @@ def main() -> int:
     if args.input is not None:
         if args.input.suffix == ".npy":
             import numpy as np
+
             x = torch.from_numpy(np.load(args.input)).float()
         else:
             x = torch.load(args.input, map_location="cpu", weights_only=False).float()
@@ -209,18 +375,20 @@ def main() -> int:
         " */\n"
         '#include "snn_head_golden.h"\n\n'
         "#define SNN_HEAD_GOLDEN_DATA "
-        "__attribute__((section(\".large_const_data\"), aligned(8)))\n\n"
+        '__attribute__((section(".large_const_data"), aligned(8)))\n\n'
         "const int snn_head_golden_ready = 1;\n\n"
     )
 
-    body = "\n\n".join([
-        emit_array("snn_head_golden_input", inp),
-        emit_array("snn_head_golden_fc1_out", fc1o),
-        emit_array("snn_head_golden_block0_out", b0o),
-        emit_array("snn_head_golden_block1_out", b1o),
-        emit_array("snn_head_golden_fc2_out", fc2o),
-        emit_array("snn_head_golden_fc3_out", acto),
-    ])
+    body = "\n\n".join(
+        [
+            emit_array("snn_head_golden_input", inp),
+            emit_array("snn_head_golden_fc1_out", fc1o),
+            emit_array("snn_head_golden_block0_out", b0o),
+            emit_array("snn_head_golden_block1_out", b1o),
+            emit_array("snn_head_golden_fc2_out", fc2o),
+            emit_array("snn_head_golden_fc3_out", acto),
+        ]
+    )
 
     args.out.write_text(header + body + "\n")
     spikes = int((fc1o != 0).sum() + (b0o != 0).sum() + (b1o != 0).sum())
