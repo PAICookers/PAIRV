@@ -32,6 +32,34 @@ make CORE=n307fd DOWNLOAD=ilm PROGRAM=application/baremetal/helloworld all
 Use `make help` to inspect the available top-level commands. Application
 Makefiles define any additional target or download-mode requirements.
 
+## PAICORE Board Programming
+
+Programming the PAICORE evalsoc board requires the
+[PAICookers customized OpenOCD](https://github.com/PAICookers/riscv-openocd/releases/tag/latest).
+It includes the support needed to recognize the board Flash; do not use a
+system, upstream, or standard Nuclei OpenOCD for board uploads. The release
+provides prebuilt archives for both supported host platforms:
+
+- [`openocd-4427ee7-linux-x64.tar.gz`](https://github.com/PAICookers/riscv-openocd/releases/download/latest/openocd-4427ee7-linux-x64.tar.gz)
+- [`openocd-4427ee7-windows-x64.tar.gz`](https://github.com/PAICookers/riscv-openocd/releases/download/latest/openocd-4427ee7-windows-x64.tar.gz)
+
+After extracting the matching archive, pass the absolute executable path to
+every `upload` invocation. Use `bin/openocd` on Linux or `bin/openocd.exe` on
+Windows:
+
+```sh
+OPENOCD=/absolute/path/to/extracted/bin/openocd
+
+make CORE=n307fd DOWNLOAD=ilmflashxip \
+  PROGRAM=application/baremetal/snn_head clean all
+make CORE=n307fd DOWNLOAD=ilmflashxip \
+  PROGRAM=application/baremetal/snn_head \
+  OPENOCD="$OPENOCD" upload
+```
+
+Use the `DOWNLOAD` mode required by the selected application; `ilmflashxip` is
+shown because applications with Flash-resident data commonly require it.
+
 ## Repository Layout
 
 | Path                           | Purpose                                                           |
