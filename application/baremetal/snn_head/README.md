@@ -151,6 +151,72 @@ stack budget and may increase `STACKSZ` (for example, `STACKSZ=6144`). The
 SDK-wide stack default is unchanged. A successful link verifies the reservation,
 not hardware startup or a complete stack-usage bound.
 
+## Three-Chip Resident Module
+
+Set `SNN_HEAD_RESIDENT=1` to select the fixed bundle in
+[`artifacts/three_chip/`](artifacts/three_chip/README.md). Default builds retain
+the single-chip assets and deployment path. This application increment provides
+resident initialization and repeated chunks; residency readback and startup
+audit records are added separately.
+
+All five parameter groups remain loaded: FC1, FC2 and FC3 use chip0, Block0
+uses chip1, and Block1 uses chip2. CPU0 executes preprocessing and serially
+orchestrates the five layers. Each chunk performs one INIT and eight SYNC
+barriers per layer, with no warm parameter deployment or cross-layer pipeline.
+Thread IDs and output namespaces are fixed by the asset manifest.
+
+Call `snn_head_initialize()` before `snn_head_run_chunk()`. Initialization loads
+each group once and is idempotent after success. Failed initialization or
+inference rejects subsequent requests until platform recovery and a fresh
+application start. Include `include/snn_head.h`; `model.mk` contributes model
+sources and assets while consumers retain their own entry point and UART code.
+The module uses global buffers and one active runtime session; callers must
+serialize access. The input and output remain finite, contiguous float32
+`[8,768]` and `[8,7]`; direct C callers own input/output validation and buffers.
+
+```sh
+make SOC=evalsoc CORE=n307fd DOWNLOAD=ilmflashxip \
+  PROGRAM=application/baremetal/snn_head \
+  LINKER_SCRIPT="$PWD/application/baremetal/snn_head/linker/ilmflashxip-snn.ld" \
+  BANNER=1 SNN_HEAD_DEBUG=0 SNN_HEAD_TIMING=1 SNN_HEAD_RESIDENT=1 clean all
+```
+
+The dedicated linker preserves the reviewed Flash layout and 4 KiB stack.
+Build separate variants in separate trees, or use `clean all`, because the SDK
+stores common objects beside source files. All runtime ABI consumers must be
+rebuilt together.
+
+Resident mode requires the prepared-runner lifecycle and exact receiver.
+Every DATA output, including zero, or all four VOLTAGE byte lanes must arrive
+along with the correct thread COMPLETE. A COMPLETE received first does not end
+the step early. Exact RX consumes a fixed window within an IRQ; a missing frame
+can block FIFO MMIO, which the CPU timer cannot preempt. This mode therefore
+requires external deadlines and platform recovery and remains subject to
+review of that interrupt-path contract.
+
+The checked-in assets do not establish board readiness. The frozen Scheme 1.0
+evidence used a fixed 102-byte SOC lane0 configuration and nine communication
+checks before each software start; deploy through the board owner's tooling.
+The original Flash/SoC/JTAG harness is not a portable CLI in this application.
+Historical ELF identities in the asset guide do not certify this new build.
+
+The UART service waits for successful initialization before READY and accepts
+repeated resident requests, including timing builds. Consume each timing report
+through `SNN_HEAD_TIMING_END` before sending the next request. An inference
+ERROR stops the service. The existing diagnostic host CLI is not a complete
+resident startup/recovery client.
+
+```sh
+cmake -S application/baremetal/snn_head/resident_host_test -B /tmp/snn-resident-build
+cmake --build /tmp/snn-resident-build -j2
+ctest --test-dir /tmp/snn-resident-build --output-on-failure
+```
+
+The Linux ASan/UBSan suite checks one-time configuration, repeated complete
+eight-step chunks, output lane identity, zero warm deployment counters, and
+failure stopping later layers and requests. Mocks are host control-flow evidence,
+not board numerical or performance acceptance.
+
 ## Host Test
 
 ```sh

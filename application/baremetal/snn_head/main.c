@@ -216,6 +216,13 @@ int main(void)
     rv_debug_set_sink(capture_debug_error, NULL);
     rv_debug_set_level(RV_DEBUG_ERROR);
 #endif
+#if SNN_HEAD_RESIDENT
+    if (!snn_head_initialize()) {
+        for (;;) {
+            __WFI();
+        }
+    }
+#endif
 #if NUCLEI_BANNER == 1
     static const uint8_t ready[] = "SNN_HEAD_UART_READY\r\n";
     for (size_t index = 0U; index < sizeof(ready) - 1U; ++index) {
@@ -244,8 +251,15 @@ int main(void)
             (void)log_timing_report();
         }
 #endif
-#if RV_DEBUG_ENABLE_LOGGING || SNN_HEAD_TIMING
+#if (RV_DEBUG_ENABLE_LOGGING || SNN_HEAD_TIMING) && !SNN_HEAD_RESIDENT
         if (status != SNN_HEAD_UART_ERR_TIMEOUT) {
+            for (;;) {
+                __WFI();
+            }
+        }
+#endif
+#if SNN_HEAD_RESIDENT
+        if (status == SNN_HEAD_UART_ERR_INFERENCE) {
             for (;;) {
                 __WFI();
             }

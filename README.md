@@ -79,6 +79,7 @@ shown because applications with Flash-resident data commonly require it.
 | ----------------------------------- | ------------------------------------------------------------------------- |
 | Manual PAICORE inference API        | [`Lib/runtime/README.md`](Lib/runtime/README.md)                         |
 | MNIST runtime inference example     | [`application/runtime/mnist`](application/runtime/mnist)                 |
+| SNN Head: default single-chip and optional resident module | [`application/baremetal/snn_head`](application/baremetal/snn_head) |
 | FlatBuffers artifact reader example | [`application/baremetal/flatbuffers`](application/baremetal/flatbuffers) |
 | Other board and OS examples         | [`application/`](application)                                            |
 

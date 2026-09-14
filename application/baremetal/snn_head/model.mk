@@ -2,6 +2,7 @@
 # SNN_HEAD_DIR and may narrow SNN_HEAD_ARTIFACTS to one layer.
 SNN_HEAD_DEBUG ?= 0
 SNN_HEAD_TIMING ?= 0
+SNN_HEAD_RESIDENT ?= 0
 # Reserve room for the SNN Head call chain and runtime runner state.
 # Consumers with deeper call chains may raise this application-local budget.
 STACKSZ ?= 4096
@@ -15,6 +16,9 @@ endif
 ifneq ($(filter-out 0 1,$(SNN_HEAD_TIMING)),)
 $(error SNN_HEAD_TIMING must be 0 or 1)
 endif
+ifneq ($(filter-out 0 1,$(SNN_HEAD_RESIDENT)),)
+$(error SNN_HEAD_RESIDENT must be 0 or 1)
+endif
 
 override RV_DEBUG_ENABLE_LOGGING := $(SNN_HEAD_DEBUG)
 override RVRT_ENABLE_STATS := $(SNN_HEAD_TIMING)
@@ -22,6 +26,15 @@ override RVRT_ENABLE_STATS := $(SNN_HEAD_TIMING)
 PAIRV_RUNTIME_DIR ?= $(NUCLEI_SDK_ROOT)/Lib/runtime
 COMMON_FLAGS += -O2 -ffp-contract=off
 COMMON_FLAGS += -DSNN_HEAD_TIMING=$(SNN_HEAD_TIMING)
+COMMON_FLAGS += -DSNN_HEAD_RESIDENT=$(SNN_HEAD_RESIDENT)
+
+ifeq ($(SNN_HEAD_RESIDENT),1)
+SNN_HEAD_ASSET_DIR ?= $(SNN_HEAD_DIR)/artifacts/three_chip
+C_SRCS += $(SNN_HEAD_DIR)/src/snn_head_resident.c
+else
+SNN_HEAD_ASSET_DIR ?= $(SNN_HEAD_DIR)/assets
+endif
+
 
 SNN_HEAD_ARTIFACTS ?= fc1_lif block0_lif block1_lif fc2 fc3
 SNN_HEAD_ARTIFACT_BINS = $(addsuffix /compile_artifacts.bin,$(addprefix $(SNN_HEAD_GENERATED_DIR)/,$(SNN_HEAD_ARTIFACTS)))
@@ -48,7 +61,7 @@ include $(PAIRV_RUNTIME_DIR)/build.mk
 ALL_OBJS += $(SNN_HEAD_ARTIFACT_OBJECTS)
 CLEAN_OBJS += $(SNN_HEAD_GENERATED_DIR)
 
-$(SNN_HEAD_GENERATED_DIR)/%/compile_artifacts.bin: $(SNN_HEAD_DIR)/assets/%/compile_artifacts.bin
+$(SNN_HEAD_GENERATED_DIR)/%/compile_artifacts.bin: $(SNN_HEAD_ASSET_DIR)/%/compile_artifacts.bin
 	mkdir -p $(dir $@)
 	cp $< $@
 
