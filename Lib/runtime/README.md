@@ -12,9 +12,9 @@
 
 | 需求                          | 入口                 | 说明                                                      |
 | ----------------------------- | -------------------- | --------------------------------------------------------- |
-| 单线程、固定首层输入输出      | `paicore_runner.h` | `deploy -> run_sample -> release`，适合 demo 和简单应用 |
-| 多步输入、显式同步或自定义 RX | `session.h`        | 应用管理 session 生命周期、输入帧和输出解码               |
-| 研究中的任务编排实验          | `experimental/`    | 不属于默认 runtime ABI，也不由普通 runtime 构建自动收集   |
+| 单线程、固定首层输入输出      | `paicore_runner.h` | 支持便捷 deploy 或 prepare/attach 的驻留模型流程         |
+| 多步输入、显式同步或自定义 RX | `session.h`        | 应用管理 session 生命周期、输入帧和输出解码              |
+| 研究中的任务编排实验          | `experimental/`    | 不属于默认 runtime ABI，也不由普通 runtime 构建自动收集  |
 
 不要把 `experimental/artifact_executor.*` 或 `experimental/task_api.h` 当作
 当前 `.fbs` 的默认执行计划接口。当前 schema 描述的是模型映射、运行时参数
@@ -91,6 +91,53 @@ runner 当前固定使用 artifact 的首线程、首个输入映射和首个输
 - 零 stride 表示紧凑连续布局；
 - 同一进程只保持一个 active runner。
 
+runner 存储必须先零初始化。`deploy` 保留原有的一步式行为。多个已配置模型需要
+共享一个 IRQ receiver 时，使用以下拆分生命周期：
+
+```text
+每个模型一次: prepare
+每个模型一次: attach -> load_config -> detach
+每个 sample: attach -> INIT/run_sample -> detach
+最终释放: release
+```
+
+`prepare` 只解析和校验 artifact，不注册 IRQ，也不发送帧。`attach` 借用共享
+frame buffer 和可选 coverage bitmap，并独占当前进程的 PAICORE NoC receiver；
+同时 attach 第二个 runner 返回 `RVRT_SESSION_BUSY`。成功的 `load_config` 状态在
+detach 后保留，因此重新 attach 不会要求或允许重复加载配置。`release` 清除
+descriptor；配置加载失败的 descriptor 在 release 前不能重新 attach。
+
+`RVRT_PAICORE_RUNNER_RX_EXACT` 要求每个 timestep 的每个 DATA 元素，或每个
+VOLTAGE 元素的四个 byte lane，都恰好出现一次，再加一条 metadata `thread_id`
+匹配的 COMPLETE。重复、错误 kind、地址、lane、timestamp 或 thread identity
+会使 session fault。缺失帧可能让 CPU 阻塞在 FIFO MMIO read，须由 PC 外部
+deadline 和软件 reset 负责恢复。DATA exact 因此要求模型为零值也显式发帧，
+例如在确认语义不改变计算结果后启用输出核的 `zero_output`。
+
+当前 runner 的 EXACT 调度只接受 `pipeline_latency == 1`。更深流水需要按每个
+SYNC 和最终 flush 分别计算 goal，尚未纳入此接口；普通 SPARSE 调度不受此限制。
+
+EXACT 的 bitmap 大小为 `ceil(T * elements * lanes / 32)` 个 `uint32_t`；当前
+SNN Head 最大为 49152 bit，即 6144 byte。规则连续的 output mapping 可使用非零
+base 地址并走快速 decoder；有 hole、重复 element 或其他不规则 mapping 时退回
+artifact lookup，仍保留相同完整性检查。
+
+输入映射也可以在 `prepare` 的既有全量校验中识别规则布局：signed INT8、
+8-bit、`copy_id=0`、最多8个固定多播 cover，条目按 element 外层／cover 内层
+排列，`tick_relative=element/64`、`addr_axon=(element%64)*8`，并保持统一的
+input `target_lcn` 和各 cover 的路由／复制分量。验证成功后，每个 runner
+缓存最多8个完整输入条目原型，sample 直接生成元素地址，继续复用已有 payload
+和 WORK1 帧打包。非规则映射退回原通用编码器，仍完成原有 schedule 校验，
+保留原来的错误时点、零值跳过、分批 cursor 和帧顺序。手动 session API
+继续使用通用路径。
+
+缓存随 runner 在 detach 后保留，release 时清空；它不缓存样本数值，也不替代
+artifact 的借用生命周期：PBCA backing bytes 必须一直有效且不可修改。
+每个 runner 的原型数组占384 B，五个 runner 共1,920 B，另有标志和计数字段。
+`rvrt_paicore_runner_t` 的大小因此增加，应用与 runtime 必须一起完整重编译，
+不能复用旧结构尺寸的对象文件；栈上 runner 的调用方还需重新核对栈预算。
+EXACT 接收、INIT/SYNC、统计和共享发送缓冲区的行为保持原合同。
+
 需要多输入、多输出、显式 timestep 或自定义同步时，改用手动 session。
 
 ## 手动 session 流程
@@ -150,7 +197,7 @@ runner 的 model reset 建立“本地 timestep 0”和硬件时间的对应关�
 
 ### SYNC barrier 和 RX handler
 
-一次同步等待的状态序列是：
+普通稀疏同步等待的状态序列是：
 
 ```text
 开始 RX barrier -> 发送 SYNC -> 收到非 COMPLETE 的 IRQ frame
@@ -162,6 +209,23 @@ RX handler 在 IRQ 上下文处理非 COMPLETE frame，只做快速解析、记�
 frame 内容只在回调期间有效。`RVRT_SYNC_MODE_RAW` 和
 `RVRT_SYNC_MODE_TIMELINE` 的 payload 解释不同，必须与 artifact runtime
 配置一致。
+
+ECLIC 以 level-trigger 注册 PAICORE NoC IRQ，但实板表明 ACK 后非空 FIFO
+不会再触发下一次 IRQ。硬件接口也没有 FIFO 计数。EXACT 因此要求
+调用者给出当前 barrier 的固定 `rx_goal`，ISR 在首次 IRQ 内按该数量
+连续读取。回调逐帧验证类型、地址、唯一 coverage 和 COMPLETE；即使
+COMPLETE 先到，也必须读满 `rx_goal` 并满足语义完成才结束。语义错误会
+被锁存，已知响应窗口仍会被消费完再 fault session。
+
+FIFO 空时的 MMIO 读可以阻塞 CPU，此时软件 timeout 无法抢占该读操作。
+因此 EXACT 的缺帧失败必须由 PC 端 deadline 发现，并用已验证的 software
+reset 恢复。普通稀疏 RX 仍以 COMPLETE 结束，不受 `rx_goal` 约束。
+
+诊断代码可通过内部头 `paicore_runner_internal.h` 的
+`rvrt_paicore_runner_exchange_exact` 发送一帧请求，使用显式 `rx_goal`
+界定原始
+64-bit 响应。它不解释 `0xE...` 为 COMPLETE，不改变 timeline epoch；回调错误或
+超时会 fault session。该接口属于 runtime 内部诊断能力，不是公共 runner API。
 
 ## 构建与验证
 

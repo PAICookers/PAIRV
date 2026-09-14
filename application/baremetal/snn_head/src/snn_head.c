@@ -35,9 +35,9 @@ size_t snn_head_artifact_size(const uint8_t *size_symbol)
     return (size_t)(uintptr_t)size_symbol;
 }
 
-bool snn_head_read_layer_artifact(const uint8_t *artifact_start,
-                                  const uint8_t *artifact_size_symbol,
-                                  snn_head_layer_artifact_context_t *context)
+bool snn_head_parse_layer_artifact(const uint8_t *artifact_start,
+                                   const uint8_t *artifact_size_symbol,
+                                   snn_head_layer_artifact_context_t *context)
 {
     if ((artifact_start == NULL) || (artifact_size_symbol == NULL) ||
         (context == NULL)) {
@@ -67,6 +67,19 @@ bool snn_head_read_layer_artifact(const uint8_t *artifact_start,
     return true;
 }
 
+bool snn_head_read_layer_artifact(const uint8_t *artifact_start,
+                                  const uint8_t *artifact_size_symbol,
+                                  snn_head_layer_artifact_context_t *context)
+{
+#if SNN_HEAD_RESIDENT
+    return snn_head_resident_artifact(artifact_start, artifact_size_symbol,
+                                      context);
+#else
+    return snn_head_parse_layer_artifact(artifact_start, artifact_size_symbol,
+                                         context);
+#endif
+}
+
 bool snn_head_validate_layer_artifact(
     const snn_head_layer_artifact_context_t *context,
     const snn_head_layer_artifact_contract_t *contract)
@@ -86,7 +99,12 @@ bool snn_head_validate_layer_artifact(
     }
 
     /* 确认输入 mapping 的帧条目、逻辑元素数和 int8 宽度。 */
-    if ((context->input_view.entry_count != contract->input_entries) ||
+    if (
+#if SNN_HEAD_RESIDENT
+        (context->input_view.entry_count < contract->input_entries) ||
+#else
+        (context->input_view.entry_count != contract->input_entries) ||
+#endif
         (context->input_view.element_count != contract->input_entries) ||
         (context->input_view.bit_width != contract->input_bit_width)) {
         return false;
@@ -108,19 +126,31 @@ bool snn_head_run_paicore_layer(
     const uint8_t *input, size_t input_capacity, size_t input_stride,
     void *output, size_t output_capacity, size_t output_stride)
 {
-    rvrt_paicore_runner_t runner = {0};
+#if SNN_HEAD_RESIDENT
+    if (config == NULL) {
+        return false;
+    }
+    rvrt_paicore_runner_t *const runner =
+        snn_head_resident_acquire(config->artifact_data, config->artifact_size);
+    if (runner == NULL) {
+        return false;
+    }
+#else
+    rvrt_paicore_runner_t local_runner = {0};
+    rvrt_paicore_runner_t *const runner = &local_runner;
     SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_DEPLOY);
     const rvrt_session_status_t deploy_status =
-        rvrt_paicore_runner_deploy(&runner, config);
+        rvrt_paicore_runner_deploy(runner, config);
     SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_DEPLOY);
     if (!snn_head_runner_status_ok(layer_name, "runner deploy",
                                    deploy_status)) {
         return false;
     }
+#endif
 
 #if SNN_HEAD_TIMING
     rvrt_session_stats_t stats_after_deploy = {0};
-    (void)rvrt_paicore_runner_get_stats(&runner, &stats_after_deploy);
+    (void)rvrt_paicore_runner_get_stats(runner, &stats_after_deploy);
     uint64_t sync_round_trip_cycles[SNN_HEAD_TIMESTEPS] = {0};
     rvrt_paicore_runner_sample_timing_t timing = {
         .sync_round_trip_cycles = sync_round_trip_cycles,
@@ -132,24 +162,28 @@ bool snn_head_run_paicore_layer(
 #if SNN_HEAD_TIMING
     const rvrt_session_status_t run_status =
         rvrt_paicore_runner_run_sample_profiled(
-            &runner, input, input_capacity, input_stride, output,
+            runner, input, input_capacity, input_stride, output,
             output_capacity, output_stride, &timing);
 #else
     const rvrt_session_status_t run_status = rvrt_paicore_runner_run_sample(
-        &runner, input, input_capacity, input_stride, output, output_capacity,
+        runner, input, input_capacity, input_stride, output, output_capacity,
         output_stride);
 #endif
     SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_SAMPLE);
     if (!snn_head_runner_status_ok(layer_name, "runner run", run_status)) {
         SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_RELEASE);
-        (void)rvrt_paicore_runner_release(&runner);
+#if SNN_HEAD_RESIDENT
+        (void)snn_head_resident_finish(runner, false);
+#else
+        (void)rvrt_paicore_runner_release(runner);
+#endif
         SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_RELEASE);
         return false;
     }
 
 #if SNN_HEAD_TIMING
     rvrt_session_stats_t stats_after_run = {0};
-    (void)rvrt_paicore_runner_get_stats(&runner, &stats_after_run);
+    (void)rvrt_paicore_runner_get_stats(runner, &stats_after_run);
     snn_head_profile_record_runner(
         sync_round_trip_cycles, timing.sync_round_trip_count,
         (uint64_t)timing.init_round_trip_cycles,
@@ -171,11 +205,17 @@ bool snn_head_run_paicore_layer(
 #endif
 
     SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_RELEASE);
+#if SNN_HEAD_RESIDENT
+    const bool released = snn_head_resident_finish(runner, true);
+    SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_RELEASE);
+    return released;
+#else
     const rvrt_session_status_t release_status =
-        rvrt_paicore_runner_release(&runner);
+        rvrt_paicore_runner_release(runner);
     SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_RELEASE);
     return snn_head_runner_status_ok(layer_name, "runner release",
                                      release_status);
+#endif
 }
 
 bool snn_head_run_chunk(const float *input, float *action)
@@ -183,6 +223,11 @@ bool snn_head_run_chunk(const float *input, float *action)
     if ((input == NULL) || (action == NULL)) {
         return false;
     }
+#if SNN_HEAD_RESIDENT
+    if (!snn_head_initialization_stats()->ready) {
+        return false;
+    }
+#endif
 
     SNN_HEAD_PROFILE_RESET();
     /* 按层串联；各层直接引用文件级共享 buffer，中间结果在 tensor_workspace

@@ -154,6 +154,18 @@ typedef struct snn_head_layer_artifact_contract_s {
     uint32_t output_dtype; /**< 输出 dtype：UINT1 spike 或 INT32 membrane。 */
 } snn_head_layer_artifact_contract_t;
 
+bool snn_head_parse_layer_artifact(const uint8_t *artifact_start,
+                                   const uint8_t *artifact_size_symbol,
+                                   snn_head_layer_artifact_context_t *context);
+#if SNN_HEAD_RESIDENT
+bool snn_head_resident_artifact(const uint8_t *artifact_start,
+                                const uint8_t *artifact_size_symbol,
+                                snn_head_layer_artifact_context_t *context);
+rvrt_paicore_runner_t *snn_head_resident_acquire(const uint8_t *artifact_start,
+                                                 size_t artifact_size);
+bool snn_head_resident_finish(rvrt_paicore_runner_t *runner, bool success);
+#endif
+
 /* block0/block1 拓扑同构共用同一份契约，由 run_chunk 传给
  * snn_head_run_block_lif， 故跨文件可见（定义在
  * snn_head_block_lif.c）。FC1/FC2/FC3 契约留在各自 .c 内 static。 */

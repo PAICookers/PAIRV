@@ -209,8 +209,108 @@ target_link_options(snn_head_host_uart_test PRIVATE
 
 add_test(NAME snn_head_host_uart_test COMMAND snn_head_host_uart_test)
 
+add_executable(snn_head_host_prepared_runner_test
+  run_prepared_runner_host.c
+  host_noc_mock.c
+  host_artifact_shim.c
+  host_artifact_support.cpp
+  "${REPO_ROOT}/Lib/debug.c"
+  "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
+  "${REPO_ROOT}/Lib/runtime/frame_codec.c"
+  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
+  "${REPO_ROOT}/Lib/runtime/session.c"
+  "${REPO_ROOT}/Lib/runtime/session_io.c"
+)
+
+target_compile_features(snn_head_host_prepared_runner_test PRIVATE c_std_17 cxx_std_17)
+target_include_directories(snn_head_host_prepared_runner_test PRIVATE
+  "${SNN_HEAD_INCLUDE_DIR}"
+  "${SNN_HEAD_SRC_DIR}"
+  "${REPO_ROOT}/tests/runtime/mocks"
+  "${REPO_ROOT}/Lib"
+  "${REPO_ROOT}/Lib/runtime"
+  "${REPO_ROOT}/third_party/flatbuffers/include"
+)
+target_compile_definitions(snn_head_host_prepared_runner_test PRIVATE
+  SNN_HEAD_ASSET_DIR="${SNN_HEAD_DIR}/assets"
+  RVRT_ENABLE_STATS=1
+)
+target_compile_options(snn_head_host_prepared_runner_test PRIVATE ${SNN_HEAD_SAN_FLAGS})
+target_link_options(snn_head_host_prepared_runner_test PRIVATE
+  -fsanitize=address,undefined
+  -no-pie
+  -Wl,--defsym,snn_head_fc1_lif_artifact_size=1310992
+  -Wl,--defsym,snn_head_block0_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_block1_lif_artifact_size=2541968
+  -Wl,--defsym,snn_head_fc2_artifact_size=2535968
+  -Wl,--defsym,snn_head_fc3_artifact_size=85088
+)
+add_test(NAME snn_head_host_prepared_runner_test
+  COMMAND snn_head_host_prepared_runner_test)
+
+add_executable(snn_head_host_input_fast_path_test
+  test_input_fast_path.cpp
+  host_noc_mock.c
+  "${REPO_ROOT}/Lib/debug.c"
+  "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
+  "${REPO_ROOT}/Lib/runtime/frame_codec.c"
+  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
+  "${REPO_ROOT}/Lib/runtime/session.c"
+  "${REPO_ROOT}/Lib/runtime/session_io.c"
+)
+target_compile_features(snn_head_host_input_fast_path_test PRIVATE
+  c_std_17 cxx_std_17)
+target_include_directories(snn_head_host_input_fast_path_test PRIVATE
+  "${REPO_ROOT}/tests/runtime/mocks"
+  "${REPO_ROOT}/Lib"
+  "${REPO_ROOT}/Lib/runtime"
+  "${REPO_ROOT}/third_party/flatbuffers/include"
+)
+target_compile_definitions(snn_head_host_input_fast_path_test PRIVATE
+  SNN_HEAD_THREE_ASSET_DIR="${SNN_HEAD_DIR}/artifacts/three_chip"
+  RVRT_ENABLE_STATS=1
+)
+target_compile_options(snn_head_host_input_fast_path_test PRIVATE
+  ${SNN_HEAD_SAN_FLAGS})
+target_link_options(snn_head_host_input_fast_path_test PRIVATE
+  -fsanitize=address,undefined -no-pie)
+add_test(NAME snn_head_host_input_fast_path_test
+  COMMAND snn_head_host_input_fast_path_test)
+
+add_executable(snn_head_host_input_fast_path_nostats_test
+  test_input_fast_path.cpp
+  host_noc_mock.c
+  "${REPO_ROOT}/Lib/debug.c"
+  "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
+  "${REPO_ROOT}/Lib/runtime/frame_codec.c"
+  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
+  "${REPO_ROOT}/Lib/runtime/session.c"
+  "${REPO_ROOT}/Lib/runtime/session_io.c"
+)
+target_compile_features(snn_head_host_input_fast_path_nostats_test PRIVATE
+  c_std_17 cxx_std_17)
+target_include_directories(snn_head_host_input_fast_path_nostats_test PRIVATE
+  "${REPO_ROOT}/tests/runtime/mocks"
+  "${REPO_ROOT}/Lib"
+  "${REPO_ROOT}/Lib/runtime"
+  "${REPO_ROOT}/third_party/flatbuffers/include"
+)
+target_compile_definitions(snn_head_host_input_fast_path_nostats_test PRIVATE
+  SNN_HEAD_THREE_ASSET_DIR="${SNN_HEAD_DIR}/artifacts/three_chip"
+  RVRT_ENABLE_STATS=0
+)
+target_compile_options(snn_head_host_input_fast_path_nostats_test PRIVATE
+  ${SNN_HEAD_SAN_FLAGS})
+target_link_options(snn_head_host_input_fast_path_nostats_test PRIVATE
+  -fsanitize=address,undefined -no-pie)
+add_test(NAME snn_head_host_input_fast_path_nostats_test
+  COMMAND snn_head_host_input_fast_path_nostats_test)
+
 add_custom_target(run
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
   DEPENDS snn_head_host_layer_test snn_head_host_artifact_test
           snn_head_host_choreo_test snn_head_host_uart_test
+          snn_head_host_prepared_runner_test
+          snn_head_host_input_fast_path_test
+          snn_head_host_input_fast_path_nostats_test
 )

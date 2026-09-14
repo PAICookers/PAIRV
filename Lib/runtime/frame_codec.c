@@ -421,6 +421,65 @@ rvrt_encode_input_chunk(const rvrt_artifact_input_mapping_view_t *view,
     return RVRT_CODEC_STATUS_DONE;
 }
 
+rvrt_codec_status_t rvrt_encode_input_canonical_chunk(
+    const rvrt_artifact_input_entry_t *cover_prototypes, uint32_t cover_count,
+    uint32_t element_count, uint32_t bit_width, rvrt_input_cursor_t *cursor,
+    const uint8_t *input, size_t input_size, rvrt_frame_t *frames,
+    uint32_t frame_capacity, uint32_t *frame_count)
+{
+    if ((cover_prototypes == NULL) || (cover_count == 0U) ||
+        (element_count == 0U) || (cursor == NULL) || (input == NULL) ||
+        (frames == NULL) || (frame_count == NULL)) {
+        return RVRT_CODEC_STATUS_NULL_ARGUMENT;
+    }
+    if ((element_count > UINT32_MAX / cover_count) || (frame_capacity == 0U)) {
+        return RVRT_CODEC_STATUS_BAD_VALUE;
+    }
+
+    *frame_count = 0U;
+    const uint32_t entry_count = element_count * cover_count;
+    while (cursor->entry_index < entry_count) {
+        const uint32_t element = cursor->entry_index / cover_count;
+        rvrt_artifact_input_entry_t entry =
+            cover_prototypes[cursor->entry_index % cover_count];
+        entry.elem_idx = element;
+        entry.tick_relative = element / 64U;
+        entry.addr_axon = (element % 64U) * 8U;
+
+        uint32_t entry_bits = 0U;
+        bool is_signed = false;
+        if (!dtype_bits(entry.dtype, &entry_bits, &is_signed) ||
+            (entry_bits != bit_width)) {
+            return RVRT_CODEC_STATUS_UNSUPPORTED;
+        }
+        if (element >= input_size) {
+            return RVRT_CODEC_STATUS_OUT_OF_RANGE;
+        }
+
+        uint8_t payload = 0U;
+        if (!encode_payload(input[element], entry_bits, is_signed, &payload)) {
+            return RVRT_CODEC_STATUS_BAD_VALUE;
+        }
+
+        cursor->entry_index++;
+        if (payload == 0U) {
+            continue;
+        }
+        if (*frame_count >= frame_capacity) {
+            cursor->entry_index--;
+            return RVRT_CODEC_STATUS_BUFFER_FULL;
+        }
+
+        const rvrt_codec_status_t status = build_work1_frame(
+            &entry, cursor->timestep, payload, &frames[*frame_count]);
+        if (status != RVRT_CODEC_STATUS_OK) {
+            return status;
+        }
+        (*frame_count)++;
+    }
+    return RVRT_CODEC_STATUS_DONE;
+}
+
 /**
  * @brief Decode one DATA frame into normalized application-timestep storage.
  *

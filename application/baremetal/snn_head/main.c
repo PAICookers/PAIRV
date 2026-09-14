@@ -9,6 +9,148 @@
 #include <stdio.h>
 #include <string.h>
 
+#if SNN_HEAD_RESIDENT || defined(SNN_HEAD_MAIN_FORMAT_TEST)
+typedef struct {
+    char *data;
+    size_t capacity;
+    size_t length;
+    bool ok;
+} resident_record_writer_t;
+
+static void resident_record_write(resident_record_writer_t *writer,
+                                  const char *data, size_t length)
+{
+    if (!writer->ok) {
+        return;
+    }
+    if (length >= writer->capacity - writer->length) {
+        writer->ok = false;
+        return;
+    }
+    memcpy(writer->data + writer->length, data, length);
+    writer->length += length;
+}
+
+static void resident_record_text(resident_record_writer_t *writer,
+                                 const char *text)
+{
+    resident_record_write(writer, text, strlen(text));
+}
+
+static void resident_record_u64(resident_record_writer_t *writer,
+                                uint64_t value)
+{
+    char digits[20U];
+    size_t first = sizeof(digits);
+    do {
+        digits[--first] = (char)('0' + value % 10U);
+        value /= 10U;
+    } while (value != 0U);
+    resident_record_write(writer, digits + first, sizeof(digits) - first);
+}
+
+static void resident_record_hex32(resident_record_writer_t *writer,
+                                  uint32_t value)
+{
+    static const char digits[] = "0123456789abcdef";
+    char encoded[8U];
+    for (size_t index = 0U; index < sizeof(encoded); ++index) {
+        const unsigned shift = (unsigned)(28U - 4U * index);
+        encoded[index] = digits[(value >> shift) & 0xfU];
+    }
+    resident_record_write(writer, encoded, sizeof(encoded));
+}
+
+static void resident_record_field(resident_record_writer_t *writer,
+                                  const char *name, uint64_t value)
+{
+    resident_record_text(writer, " ");
+    resident_record_text(writer, name);
+    resident_record_text(writer, "=");
+    resident_record_u64(writer, value);
+}
+
+static size_t resident_record_finish(resident_record_writer_t *writer)
+{
+    if (!writer->ok) {
+        return 0U;
+    }
+    writer->data[writer->length] = '\0';
+    return writer->length;
+}
+
+static size_t format_resident_init(char *buffer, size_t capacity,
+                                   const char *status, uint64_t cycles,
+                                   uint32_t hz, uint32_t config_frames)
+{
+    resident_record_writer_t writer = {
+        .data = buffer,
+        .capacity = capacity,
+        .length = 0U,
+        .ok = buffer != NULL && capacity != 0U,
+    };
+    resident_record_text(&writer, "SNN_HEAD_RESIDENT_INIT status=");
+    resident_record_text(&writer, status);
+    resident_record_field(&writer, "cycles", cycles);
+    resident_record_field(&writer, "hz", hz);
+    resident_record_field(&writer, "config_frames", config_frames);
+    resident_record_text(&writer, "\r\n");
+    return resident_record_finish(&writer);
+}
+
+static size_t format_residency_audit(
+    char *buffer, size_t capacity, const char *phase, const char *status,
+    uint64_t cycles, uint32_t windows, uint64_t bytes, uint32_t layer,
+    uint32_t query, uint32_t frame, uint32_t expected_high,
+    uint32_t expected_low, uint32_t actual_high, uint32_t actual_low)
+{
+    resident_record_writer_t writer = {
+        .data = buffer,
+        .capacity = capacity,
+        .length = 0U,
+        .ok = buffer != NULL && capacity != 0U,
+    };
+    resident_record_text(&writer, "SNN_HEAD_RESIDENT_AUDIT phase=");
+    resident_record_text(&writer, phase);
+    resident_record_text(&writer, " status=");
+    resident_record_text(&writer, status);
+    resident_record_field(&writer, "cycles", cycles);
+    resident_record_field(&writer, "windows", windows);
+    resident_record_field(&writer, "bytes", bytes);
+    resident_record_field(&writer, "layer", layer);
+    resident_record_field(&writer, "query", query);
+    resident_record_field(&writer, "frame", frame);
+    resident_record_text(&writer, " expected=");
+    resident_record_hex32(&writer, expected_high);
+    resident_record_hex32(&writer, expected_low);
+    resident_record_text(&writer, " actual=");
+    resident_record_hex32(&writer, actual_high);
+    resident_record_hex32(&writer, actual_low);
+    resident_record_text(&writer, "\r\n");
+    return resident_record_finish(&writer);
+}
+#endif
+
+#if defined(SNN_HEAD_MAIN_FORMAT_TEST)
+size_t snn_head_test_format_resident_init(
+    char *buffer, size_t capacity, const char *status, uint64_t cycles,
+    uint32_t hz, uint32_t config_frames)
+{
+    return format_resident_init(buffer, capacity, status, cycles, hz,
+                                config_frames);
+}
+
+size_t snn_head_test_format_residency_audit(
+    char *buffer, size_t capacity, const char *phase, const char *status,
+    uint64_t cycles, uint32_t windows, uint64_t bytes, uint32_t layer,
+    uint32_t query, uint32_t frame, uint32_t expected_high,
+    uint32_t expected_low, uint32_t actual_high, uint32_t actual_low)
+{
+    return format_residency_audit(
+        buffer, capacity, phase, status, cycles, windows, bytes, layer, query,
+        frame, expected_high, expected_low, actual_high, actual_low);
+}
+#else
 #include "debug.h"
 #include "evalsoc_uart.h"
 #include "nuclei_sdk_hal.h"
@@ -16,6 +158,45 @@
 #include "snn_head.h"
 #include "snn_head_profile.h"
 #include "snn_head_uart.h"
+
+#if SNN_HEAD_RESIDENT
+static void write_resident_record(const char *data, size_t length)
+{
+    for (size_t index = 0U; index < length; ++index) {
+        (void)uart_write(SOC_DEBUG_UART, (uint8_t)data[index]);
+    }
+}
+
+static void write_formatted_resident_record(const char *data, size_t length)
+{
+    if (length == 0U) {
+        static const char failure[] =
+            "SNN_HEAD_RESIDENT_RECORD status=fail\r\n";
+        write_resident_record(failure, sizeof(failure) - 1U);
+        for (;;) {
+            __WFI();
+        }
+    }
+    write_resident_record(data, length);
+}
+#endif
+
+#if SNN_HEAD_AUDIT
+#include "snn_head_audit.h"
+
+static void report_residency_audit(const char *phase)
+{
+    const snn_head_audit_stats_t *const audit = snn_head_audit_stats();
+    char line[320U];
+    const size_t length = format_residency_audit(
+        line, sizeof(line), phase, audit->passed ? "ok" : "fail",
+        audit->cycles, audit->windows, (uint64_t)audit->compared_frames * 8U,
+        audit->failed_layer, audit->failed_query, audit->failed_frame,
+        audit->expected_high, audit->expected_low, audit->actual_high,
+        audit->actual_low);
+    write_formatted_resident_record(line, length);
+}
+#endif
 
 #ifndef SNN_HEAD_UART_IO_TIMEOUT_MS
 #define SNN_HEAD_UART_IO_TIMEOUT_MS 1000U
@@ -216,6 +397,31 @@ int main(void)
     rv_debug_set_sink(capture_debug_error, NULL);
     rv_debug_set_level(RV_DEBUG_ERROR);
 #endif
+#if SNN_HEAD_RESIDENT
+    const bool initialized = snn_head_initialize();
+    const snn_head_initialization_stats_t *const init =
+        snn_head_initialization_stats();
+    char init_line[192U];
+    const size_t init_length = format_resident_init(
+        init_line, sizeof(init_line), initialized ? "ok" : "fail",
+        init->total_cycles, (uint32_t)SystemCoreClock, init->config_frames);
+    write_formatted_resident_record(init_line, init_length);
+#if SNN_HEAD_AUDIT
+    static const char audit_plan_prefix[] =
+        "SNN_HEAD_RESIDENT_AUDIT_PLAN sha256=";
+    static const char line_end[] = "\r\n";
+    const char *const audit_identity = snn_head_audit_identity();
+    write_resident_record(audit_plan_prefix, sizeof(audit_plan_prefix) - 1U);
+    write_resident_record(audit_identity, strlen(audit_identity));
+    write_resident_record(line_end, sizeof(line_end) - 1U);
+    report_residency_audit("before_init");
+#endif
+    if (!initialized) {
+        for (;;) {
+            __WFI();
+        }
+    }
+#endif
 #if NUCLEI_BANNER == 1
     static const uint8_t ready[] = "SNN_HEAD_UART_READY\r\n";
     for (size_t index = 0U; index < sizeof(ready) - 1U; ++index) {
@@ -244,8 +450,26 @@ int main(void)
             (void)log_timing_report();
         }
 #endif
-#if RV_DEBUG_ENABLE_LOGGING || SNN_HEAD_TIMING
+#if SNN_HEAD_AUDIT
+        if (status == SNN_HEAD_UART_OK) {
+            const bool verified = snn_head_verify_residency();
+            report_residency_audit("after_chunk_weights");
+            if (!verified) {
+                for (;;) {
+                    __WFI();
+                }
+            }
+        }
+#endif
+#if (RV_DEBUG_ENABLE_LOGGING || SNN_HEAD_TIMING) && !SNN_HEAD_RESIDENT
         if (status != SNN_HEAD_UART_ERR_TIMEOUT) {
+            for (;;) {
+                __WFI();
+            }
+        }
+#endif
+#if SNN_HEAD_RESIDENT
+        if (status == SNN_HEAD_UART_ERR_INFERENCE) {
             for (;;) {
                 __WFI();
             }
@@ -253,3 +477,4 @@ int main(void)
 #endif
     }
 }
+#endif

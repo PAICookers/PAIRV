@@ -2,6 +2,12 @@
 # SNN_HEAD_DIR and may narrow SNN_HEAD_ARTIFACTS to one layer.
 SNN_HEAD_DEBUG ?= 0
 SNN_HEAD_TIMING ?= 0
+SNN_HEAD_RESIDENT ?= 0
+SNN_HEAD_AUDIT ?= 0
+# The shared runner also grows the single-chip stack-local call chain.
+# Reserve 4 KiB for every SNN Head target; consumers may raise this budget.
+SNN_HEAD_STACK_SIZE ?= 4096
+LDFLAGS += -Wl,--defsym=__STACK_SIZE=$(SNN_HEAD_STACK_SIZE)
 # Disposable outputs local to the executable being built; assets stay
 # read-only.
 SNN_HEAD_GENERATED_DIR := generated
@@ -12,6 +18,12 @@ endif
 ifneq ($(filter-out 0 1,$(SNN_HEAD_TIMING)),)
 $(error SNN_HEAD_TIMING must be 0 or 1)
 endif
+ifneq ($(filter-out 0 1,$(SNN_HEAD_RESIDENT)),)
+$(error SNN_HEAD_RESIDENT must be 0 or 1)
+endif
+ifneq ($(filter-out 0 1,$(SNN_HEAD_AUDIT)),)
+$(error SNN_HEAD_AUDIT must be 0 or 1)
+endif
 
 override RV_DEBUG_ENABLE_LOGGING := $(SNN_HEAD_DEBUG)
 override RVRT_ENABLE_STATS := $(SNN_HEAD_TIMING)
@@ -19,6 +31,20 @@ override RVRT_ENABLE_STATS := $(SNN_HEAD_TIMING)
 PAIRV_RUNTIME_DIR ?= $(NUCLEI_SDK_ROOT)/Lib/runtime
 COMMON_FLAGS += -O2 -ffp-contract=off
 COMMON_FLAGS += -DSNN_HEAD_TIMING=$(SNN_HEAD_TIMING)
+COMMON_FLAGS += -DSNN_HEAD_RESIDENT=$(SNN_HEAD_RESIDENT)
+COMMON_FLAGS += -DSNN_HEAD_AUDIT=$(SNN_HEAD_AUDIT)
+
+ifeq ($(SNN_HEAD_RESIDENT),1)
+SNN_HEAD_ASSET_DIR ?= $(SNN_HEAD_DIR)/artifacts/three_chip
+C_SRCS += $(SNN_HEAD_DIR)/src/snn_head_resident.c
+else
+SNN_HEAD_ASSET_DIR ?= $(SNN_HEAD_DIR)/assets
+endif
+
+ifeq ($(SNN_HEAD_AUDIT),1)
+C_SRCS += $(SNN_HEAD_DIR)/src/snn_head_audit.c
+INCDIRS += $(SNN_HEAD_ASSET_DIR)/audit
+endif
 
 SNN_HEAD_ARTIFACTS ?= fc1_lif block0_lif block1_lif fc2 fc3
 SNN_HEAD_ARTIFACT_BINS = $(addsuffix /compile_artifacts.bin,$(addprefix $(SNN_HEAD_GENERATED_DIR)/,$(SNN_HEAD_ARTIFACTS)))
@@ -45,7 +71,7 @@ include $(PAIRV_RUNTIME_DIR)/build.mk
 ALL_OBJS += $(SNN_HEAD_ARTIFACT_OBJECTS)
 CLEAN_OBJS += $(SNN_HEAD_GENERATED_DIR)
 
-$(SNN_HEAD_GENERATED_DIR)/%/compile_artifacts.bin: $(SNN_HEAD_DIR)/assets/%/compile_artifacts.bin
+$(SNN_HEAD_GENERATED_DIR)/%/compile_artifacts.bin: $(SNN_HEAD_ASSET_DIR)/%/compile_artifacts.bin
 	mkdir -p $(dir $@)
 	cp $< $@
 
