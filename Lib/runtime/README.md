@@ -275,3 +275,19 @@ frames without classifying raw payload prefixes as WORK or COMPLETE. Early or
 missing semantic completion and handler failures drain the declared count, then
 fault the session. This internal boundary inherits the exact FIFO blocking
 limitation above; it does not provide model-specific audit logic.
+
+## Canonical input mapping cache
+
+Prepared runners can cache up to eight complete INT8 input mapping covers
+(`RVRT_PAICORE_RUNNER_INPUT_COVER_MAX`). Preparation validates the entire input
+schedule and selects the cache only for canonical element/tick/axon ordering
+with matching route/copy/dtype metadata. Other legal layouts retain generic
+encoding; invalid routes retain the generic encoding failure phase. The cached
+encoder preserves generic wire bits, chunk cursors, zero-payload skipping,
+session guards and transport statistics. Detach preserves the prepared cache;
+release clears it. Internal codec/session I/O helpers are not application APIs.
+
+The cache adds eight 48-byte input-entry prototypes plus count/flag state per
+runner. Rebuild all callers and reassess their stack/static-storage budget
+before integrating the changed public structure into firmware. The host suite
+uses synthetic mappings; no board performance or model acceptance is implied.

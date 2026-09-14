@@ -6,6 +6,7 @@
 #include "frame_codec_internal.h"
 #include "session_internal.h"
 #include "session_io.h"
+#include "session_io_internal.h"
 
 #define RUN_VOLT_LANE_ADDR_SHIFT 3U
 #define RUN_VOLT_LANE_STRIDE 8U
@@ -14,6 +15,7 @@
 #define RUN_VOLT_GROUP_SIZE_SHIFT 3U
 #define RUN_VOLT_GROUP_PITCH_SHIFT 5U
 #define RUN_DATA_UINT1 1U
+#define RUN_INPUT_INT8 8U
 
 static rvrt_session_status_t
 runner_session_failure(const char *operation, uint32_t completed_timesteps,
@@ -516,14 +518,41 @@ static bool sample_regions_overlap(const void *left, size_t left_size,
            (right_begin < left_begin + left_size);
 }
 
-static rvrt_session_status_t
-validate_input_schedule(const rvrt_artifact_input_mapping_view_t *view,
-                        uint32_t total_timesteps)
+static bool input_route_component_valid(int32_t value)
 {
+    return (value >= -31) && (value <= 31);
+}
+
+static bool same_input_cover(const rvrt_artifact_input_entry_t *left,
+                             const rvrt_artifact_input_entry_t *right)
+{
+    return (left->core_offset.xy == right->core_offset.xy) &&
+           (left->core_offset.x == right->core_offset.x) &&
+           (left->core_offset.y == right->core_offset.y) &&
+           (left->copy_count.xy == right->copy_count.xy) &&
+           (left->copy_count.x == right->copy_count.x) &&
+           (left->copy_count.y == right->copy_count.y) &&
+           (left->target_lcn == right->target_lcn) &&
+           (left->copy_id == right->copy_id) && (left->dtype == right->dtype);
+}
+
+static rvrt_session_status_t
+validate_input_schedule(rvrt_paicore_runner_t *runner, uint32_t total_timesteps)
+{
+    const rvrt_artifact_input_mapping_view_t *const view = &runner->input_view;
     if ((view == NULL) || (view->entries == NULL) ||
         (view->entry_count == 0U)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
+
+    runner->has_fast_input_layout = false;
+    runner->fast_input_cover_count = 0U;
+    bool canonical = (view->bit_width == 8U) && (view->element_count != 0U) &&
+                     (view->entry_count % view->element_count == 0U);
+    const uint32_t cover_count =
+        canonical ? view->entry_count / view->element_count : 0U;
+    canonical = canonical && (cover_count != 0U) &&
+                (cover_count <= RVRT_PAICORE_RUNNER_INPUT_COVER_MAX);
 
     for (uint32_t index = 0U; index < view->entry_count; ++index) {
         rvrt_artifact_input_entry_t entry = {0};
@@ -542,6 +571,40 @@ validate_input_schedule(const rvrt_artifact_input_mapping_view_t *view,
         if (total_timesteps > timestamp_capacity) {
             return RVRT_SESSION_SCHEDULE_UNSUPPORTED;
         }
+
+        if (canonical) {
+            const uint32_t element = index / cover_count;
+            const uint32_t cover = index % cover_count;
+            const bool route_valid =
+                input_route_component_valid(entry.core_offset.xy) &&
+                input_route_component_valid(entry.core_offset.x) &&
+                input_route_component_valid(entry.core_offset.y) &&
+                input_route_component_valid(entry.copy_count.xy) &&
+                input_route_component_valid(entry.copy_count.x) &&
+                input_route_component_valid(entry.copy_count.y);
+            const bool entry_canonical =
+                route_valid && (entry.elem_idx == element) &&
+                (entry.tick_relative == element / 64U) &&
+                (entry.addr_axon == (element % 64U) * 8U) &&
+                (entry.addr_axon <= RVRT_WF_AX_MASK) && (entry.copy_id == 0U) &&
+                (entry.dtype == RUN_INPUT_INT8) &&
+                ((cover == 0U) ||
+                 (entry.target_lcn ==
+                  runner->fast_input_prototypes[0].target_lcn)) &&
+                ((element == 0U) ||
+                 same_input_cover(&runner->fast_input_prototypes[cover],
+                                  &entry));
+            if (!entry_canonical) {
+                canonical = false;
+            } else if (element == 0U) {
+                runner->fast_input_prototypes[cover] = entry;
+            }
+        }
+    }
+    if (canonical && (view->element_count <= UINT32_MAX / cover_count) &&
+        (view->element_count * cover_count == view->entry_count)) {
+        runner->fast_input_cover_count = cover_count;
+        runner->has_fast_input_layout = true;
     }
     return RVRT_SESSION_OK;
 }
@@ -623,7 +686,7 @@ rvrt_paicore_runner_prepare(rvrt_paicore_runner_t *runner,
     }
 
     const rvrt_session_status_t input_window_status =
-        validate_input_schedule(&runner->input_view, runner->runtime.timesteps);
+        validate_input_schedule(runner, runner->runtime.timesteps);
     if (input_window_status != RVRT_SESSION_OK) {
         RV_DEBUG_LOGE("paicore_runner", "input window T=%u cannot fit target",
                       (unsigned)runner->runtime.timesteps);
@@ -974,10 +1037,18 @@ rvrt_session_status_t rvrt_paicore_runner_run_sample_profiled(
             input + (size_t)timestep * effective_input_stride;
         RV_DEBUG_LOGI("paicore_runner", "timestep=%u send begin",
                       (unsigned)timestep);
-        status = rvrt_session_send_input_timestep(
-            &runner->session, &runner->input_view, timestep, input_row,
-            runner->input_row_bytes, runner->session.rx_frames,
-            runner->encode_frame_capacity);
+        status =
+            runner->has_fast_input_layout
+                ? rvrt_session_send_canonical_input_timestep(
+                      &runner->session, &runner->input_view,
+                      runner->fast_input_prototypes,
+                      runner->fast_input_cover_count, timestep, input_row,
+                      runner->input_row_bytes, runner->session.rx_frames,
+                      runner->encode_frame_capacity)
+                : rvrt_session_send_input_timestep(
+                      &runner->session, &runner->input_view, timestep,
+                      input_row, runner->input_row_bytes,
+                      runner->session.rx_frames, runner->encode_frame_capacity);
         if (status != RVRT_SESSION_OK) {
             return runner_session_failure("send", timestep, status);
         }

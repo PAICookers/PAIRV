@@ -15,6 +15,12 @@
 #define RVRT_VOLT_LANE_COUNT 4U
 #define RVRT_VOLT_COMPLETE_MASK ((1U << RVRT_VOLT_LANE_COUNT) - 1U)
 
+rvrt_codec_status_t rvrt_encode_input_canonical_chunk(
+    const rvrt_artifact_input_entry_t *cover_prototypes, uint32_t cover_count,
+    uint32_t element_count, uint32_t bit_width, rvrt_input_cursor_t *cursor,
+    const uint8_t *input, size_t input_size, rvrt_frame_t *frames,
+    uint32_t frame_capacity, uint32_t *frame_count);
+
 static inline rvrt_codec_status_t
 rvrt_output_frame_address(const rvrt_artifact_output_mapping_view_t *view,
                           const rvrt_frame_t *frame, uint32_t *timestep,

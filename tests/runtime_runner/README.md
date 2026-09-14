@@ -37,3 +37,11 @@ nonblocking interrupt rule and an external deadline for hardware experiments.
 raw E-prefix and WORK-prefix payloads, replies larger than RX scratch, unchanged
 sync epochs, exact transport statistics, semantic completion boundaries, handler
 failure, and missing replies. It inherits the blocking-FIFO limitation above.
+
+`test_input_cache` compares generic and cached encoding bit for bit using
+synthetic canonical mappings with 65, 768 and 1536 elements and 1, 2, 3 and 8
+covers. It covers all eight timesteps, chunk capacities around cover boundaries,
+zero/signed-edge payloads, short-input cursor state, noncanonical fallback,
+late schedule validation, attach/detach cache retention, and session guards and
+statistics. It requires no generated three-chip assets. Real-asset and target
+firmware integration checks belong to the dependent application changes.

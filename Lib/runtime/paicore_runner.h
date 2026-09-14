@@ -53,6 +53,9 @@ typedef struct rvrt_paicore_runner_attach_config_s {
     uint32_t coverage_word_capacity;
 } rvrt_paicore_runner_attach_config_t;
 
+/** Maximum complete input mapping entries cached by one prepared runner. */
+#define RVRT_PAICORE_RUNNER_INPUT_COVER_MAX 8U
+
 /** @brief Caller-owned resources used to deploy one PAICORE sample runner. */
 typedef struct rvrt_paicore_runner_deploy_config_s {
     /** Verified artifact bytes; must remain valid while the runner is deployed.
@@ -103,12 +106,16 @@ typedef struct rvrt_paicore_runner_s {
     uint32_t exact_slot_count;
     uint32_t expected_thread_id;
     uint32_t fast_output_base;
+    rvrt_artifact_input_entry_t
+        fast_input_prototypes[RVRT_PAICORE_RUNNER_INPUT_COVER_MAX];
+    uint32_t fast_input_cover_count;
     rvrt_paicore_runner_rx_policy_t rx_policy;
     rvrt_paicore_runner_state_t state;
     bool config_loaded;
     bool config_load_failed;
     bool has_fast_data_layout;
     bool has_fast_voltage_layout;
+    bool has_fast_input_layout;
 } rvrt_paicore_runner_t;
 
 /**
