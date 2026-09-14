@@ -265,3 +265,13 @@ cannot bound that stall. This implementation therefore requires architecture
 review before satisfying the repository's bounded, nonblocking IRQ requirement.
 Host fault tests model a missing frame as an MMIO read error and are not evidence
 of a hardware deadline. No new board acceptance is implied by these host tests.
+
+## Internal diagnostic exchange
+
+`paicore_runner_internal.h` exposes a raw exact exchange for runtime-integrated
+diagnostics. The caller specifies a fixed receive count and a semantic handler.
+The exchange leaves the synchronization epoch unchanged and counts transport
+frames without classifying raw payload prefixes as WORK or COMPLETE. Early or
+missing semantic completion and handler failures drain the declared count, then
+fault the session. This internal boundary inherits the exact FIFO blocking
+limitation above; it does not provide model-specific audit logic.

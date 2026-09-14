@@ -53,6 +53,7 @@ static void clear_rx_barrier(rvrt_session_rx_barrier_t *rx_barrier)
     rx_barrier->exact_rx_goal = 0U;
     rx_barrier->exact_rx_received = 0U;
     rx_barrier->exact_semantic_complete = false;
+    rx_barrier->classify_frames = false;
 }
 
 static void clear_sync_epoch(rvrt_session_t *session)
@@ -71,7 +72,8 @@ static void
 start_rx_barrier(rvrt_session_t *session,
                  rvrt_session_rx_frame_handler_t rx_frame_handler,
                  rvrt_session_rx_exact_frame_handler_t rx_exact_frame_handler,
-                 void *rx_frame_handler_user_data, uint32_t exact_rx_goal)
+                 void *rx_frame_handler_user_data, bool classify_frames,
+                 uint32_t exact_rx_goal)
 {
     rvrt_session_rx_barrier_t *const rx_barrier = &session->rx_barrier;
 
@@ -82,6 +84,7 @@ start_rx_barrier(rvrt_session_t *session,
     rx_barrier->rx_exact_frame_handler = rx_exact_frame_handler;
     rx_barrier->exact_rx_goal = exact_rx_goal;
     rx_barrier->rx_frame_handler_user_data = rx_frame_handler_user_data;
+    rx_barrier->classify_frames = classify_frames;
     __WMB();
     rx_barrier->active = true;
     noc_irq_enable();
@@ -93,15 +96,17 @@ static void receive_rx_barrier_frame(rvrt_session_t *session,
     rvrt_session_rx_barrier_t *const rx_barrier = &session->rx_barrier;
 #if RVRT_ENABLE_STATS
     rx_barrier->received_count++;
-    if (rvrt_frame_is_work(frame)) {
+    if (rx_barrier->classify_frames && rvrt_frame_is_work(frame)) {
         rx_barrier->output_work_count++;
     }
-    const bool is_complete = rvrt_frame_is_complete(frame);
+    const bool is_complete =
+        rx_barrier->classify_frames && rvrt_frame_is_complete(frame);
     if (is_complete) {
         rx_barrier->complete_count++;
     }
 #else
-    const bool is_complete = rvrt_frame_is_complete(frame);
+    const bool is_complete =
+        rx_barrier->classify_frames && rvrt_frame_is_complete(frame);
 #endif
 
     if (rx_barrier->rx_exact_frame_handler != NULL) {
@@ -227,27 +232,35 @@ static rvrt_session_status_t wait_rx_barrier(rvrt_session_t *session,
  * A NULL output pair intentionally discards the barrier response, which is used
  * for model reset where the only expected response is the completion frame.
  */
+typedef enum control_wait_kind_e {
+    CONTROL_WAIT_OTHER = 0,
+    CONTROL_WAIT_INIT,
+    CONTROL_WAIT_SYNC,
+} control_wait_kind_t;
+
 static rvrt_session_status_t run_control_barrier(
     rvrt_session_t *session, const rvrt_frame_t *control_frame,
-    uint32_t timeout_ms, bool is_sync_barrier, const rvrt_frame_t **rx_frames,
-    uint32_t *rx_frame_count, rvrt_session_rx_frame_handler_t rx_frame_handler,
+    uint32_t timeout_ms, control_wait_kind_t wait_kind, bool classify_frames,
+    const rvrt_frame_t **rx_frames, uint32_t *rx_frame_count,
+    rvrt_session_rx_frame_handler_t rx_frame_handler,
     rvrt_session_rx_exact_frame_handler_t rx_exact_frame_handler,
     void *rx_frame_handler_user_data, uint32_t exact_rx_goal)
 {
     start_rx_barrier(session, rx_frame_handler, rx_exact_frame_handler,
-                     rx_frame_handler_user_data, exact_rx_goal);
+                     rx_frame_handler_user_data, classify_frames,
+                     exact_rx_goal);
     noc_fifo_write_frame_words(control_frame->high, control_frame->low);
 #if RVRT_ENABLE_STATS
     rv_counter_t barrier_cycles = 0U;
     const rvrt_session_status_t status =
         wait_rx_barrier(session, timeout_ms, &barrier_cycles);
-    if (is_sync_barrier) {
+    if (wait_kind == CONTROL_WAIT_SYNC) {
         session->stats.sync_wait_cycles += barrier_cycles;
-    } else {
+    } else if (wait_kind == CONTROL_WAIT_INIT) {
         session->stats.init_wait_cycles += barrier_cycles;
     }
 #else
-    (void)is_sync_barrier;
+    (void)wait_kind;
     const rvrt_session_status_t status =
         wait_rx_barrier(session, timeout_ms, NULL);
 #endif
@@ -444,9 +457,9 @@ rvrt_session_status_t rvrt_session_reset_model(rvrt_session_t *session,
         return RVRT_SESSION_RUNTIME_ERROR;
     }
 
-    const rvrt_session_status_t status =
-        run_control_barrier(session, &init_frame, timeout_ms, false, NULL, NULL,
-                            discard_reset_frame, NULL, NULL, 0U);
+    const rvrt_session_status_t status = run_control_barrier(
+        session, &init_frame, timeout_ms, CONTROL_WAIT_INIT, true, NULL, NULL,
+        discard_reset_frame, NULL, NULL, 0U);
     if (status == RVRT_SESSION_OK) {
         clear_sync_epoch(session);
     }
@@ -488,9 +501,9 @@ static rvrt_session_status_t sync_wait_payload_impl(
     }
 
     const rvrt_session_status_t status = run_control_barrier(
-        session, &sync_frame, timeout_ms, true, rx_frames, rx_frame_count,
-        rx_frame_handler, rx_exact_frame_handler, rx_frame_handler_user_data,
-        exact_rx_goal);
+        session, &sync_frame, timeout_ms, CONTROL_WAIT_SYNC, true, rx_frames,
+        rx_frame_count, rx_frame_handler, rx_exact_frame_handler,
+        rx_frame_handler_user_data, exact_rx_goal);
 #if RVRT_ENABLE_STATS
     if (status == RVRT_SESSION_OK) {
         session->stats.sync_barriers++;
@@ -589,9 +602,9 @@ rvrt_session_status_t rvrt_session_reset_model_with_exact_rx_handler(
                               &init_frame) != RVRT_CODEC_STATUS_OK) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
-    const rvrt_session_status_t status =
-        run_control_barrier(session, &init_frame, timeout_ms, false, NULL, NULL,
-                            NULL, rx_frame_handler, user_data, rx_goal);
+    const rvrt_session_status_t status = run_control_barrier(
+        session, &init_frame, timeout_ms, CONTROL_WAIT_INIT, true, NULL, NULL,
+        NULL, rx_frame_handler, user_data, rx_goal);
     if (status == RVRT_SESSION_OK) {
         clear_sync_epoch(session);
     }
@@ -609,6 +622,28 @@ rvrt_session_status_t rvrt_session_sync_wait_until_with_exact_rx_handler(
     return sync_wait_until_impl(session, completed_timesteps, timeout_ms, NULL,
                                 NULL, NULL, rx_frame_handler, user_data,
                                 rx_goal);
+}
+
+rvrt_session_status_t rvrt_session_exchange_exact(
+    rvrt_session_t *session, const rvrt_frame_t *request, uint32_t rx_goal,
+    uint32_t timeout_ms, rvrt_session_rx_exact_frame_handler_t rx_frame_handler,
+    void *user_data)
+{
+    if ((session == NULL) || (session->artifact == NULL) ||
+        (session->rx_frames == NULL) || (session->rx_capacity == 0U) ||
+        (request == NULL) || (rx_goal == 0U) || (timeout_ms == 0U) ||
+        (rx_frame_handler == NULL)) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    if (session->faulted) {
+        return RVRT_SESSION_FAULTED;
+    }
+    if (session->rx_barrier.active) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    return run_control_barrier(session, request, timeout_ms, CONTROL_WAIT_OTHER,
+                               false, NULL, NULL, NULL, rx_frame_handler,
+                               user_data, rx_goal);
 }
 
 void paicore_noc_handler(void)

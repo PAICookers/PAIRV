@@ -1,4 +1,4 @@
-#include "paicore_runner.h"
+#include "paicore_runner_internal.h"
 
 #include <string.h>
 
@@ -817,6 +817,20 @@ rvrt_paicore_runner_get_stats(const rvrt_paicore_runner_t *runner,
         return RVRT_SESSION_RUNTIME_ERROR;
     }
     return rvrt_session_get_stats(&runner->session, stats);
+}
+
+rvrt_session_status_t rvrt_paicore_runner_exchange_exact(
+    rvrt_paicore_runner_t *runner, const rvrt_frame_t *request,
+    uint32_t rx_goal, uint32_t timeout_ms,
+    rvrt_session_rx_exact_frame_handler_t handler, void *user_data)
+{
+    if ((runner == NULL) || (runner->state != RVRT_PAICORE_RUNNER_ATTACHED) ||
+        !runner->config_loaded || runner->config_load_failed ||
+        (runner->session.artifact != &runner->artifact)) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    return rvrt_session_exchange_exact(&runner->session, request, rx_goal,
+                                       timeout_ms, handler, user_data);
 }
 
 static rvrt_session_status_t

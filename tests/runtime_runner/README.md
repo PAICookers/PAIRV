@@ -32,3 +32,8 @@ may block an MMIO read, so the software timeout is not an IRQ deadline. The mock
 returns a read error for that case; it does not prove hardware boundedness.
 This behavior requires architecture review against the repository's bounded,
 nonblocking interrupt rule and an external deadline for hardware experiments.
+
+`test_exchange` verifies internal diagnostic transactions without a model audit:
+raw E-prefix and WORK-prefix payloads, replies larger than RX scratch, unchanged
+sync epochs, exact transport statistics, semantic completion boundaries, handler
+failure, and missing replies. It inherits the blocking-FIFO limitation above.

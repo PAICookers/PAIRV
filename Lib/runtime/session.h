@@ -109,6 +109,8 @@ typedef struct rvrt_session_rx_barrier_s {
     volatile uint32_t exact_rx_received;
     /** Whether the exact handler has confirmed its semantic completion. */
     volatile bool exact_semantic_complete;
+    /** Whether PAICORE WORK/COMPLETE classification applies to this barrier. */
+    bool classify_frames;
 } rvrt_session_rx_barrier_t;
 
 /** @brief Session-lifetime transport counters collected when enabled. */
