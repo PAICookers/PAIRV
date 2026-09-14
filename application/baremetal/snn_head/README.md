@@ -143,6 +143,14 @@ The default UART rate is 3,000,000 baud. With `BANNER=1`, the SDK Banner is
 followed by `SNN_HEAD_UART_READY`; the board test tool waits for and saves this
 marker before sending binary data. `BANNER=0` emits no startup text.
 
+`model.mk` reserves 4 KiB of stack with the SDK's `STACKSZ=4096` for SNN
+Head applications and board tests. This provides space for the model call
+chain and stack-local runtime runner state, including planned runner growth.
+Consumers with additional calls or nested interrupts must review their own
+stack budget and may increase `STACKSZ` (for example, `STACKSZ=6144`). The
+SDK-wide stack default is unchanged. A successful link verifies the reservation,
+not hardware startup or a complete stack-usage bound.
+
 ## Host Test
 
 ```sh

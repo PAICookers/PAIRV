@@ -2,6 +2,9 @@
 # SNN_HEAD_DIR and may narrow SNN_HEAD_ARTIFACTS to one layer.
 SNN_HEAD_DEBUG ?= 0
 SNN_HEAD_TIMING ?= 0
+# Reserve room for the SNN Head call chain and runtime runner state.
+# Consumers with deeper call chains may raise this application-local budget.
+STACKSZ ?= 4096
 # Disposable outputs local to the executable being built; assets stay
 # read-only.
 SNN_HEAD_GENERATED_DIR := generated
