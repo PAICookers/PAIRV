@@ -91,6 +91,23 @@ runner 当前固定使用 artifact 的首线程、首个输入映射和首个输
 - 零 stride 表示紧凑连续布局；
 - 同一进程只保持一个 active runner。
 
+规则输出映射支持非零 axon-bit 基址。UINT1 DATA 地址须逐元素连续；
+VOLTAGE 基址须按 32 对齐，每 8 个元素使用一个 32 地址的四 lane 分组。
+快速 decoder 按基址相对地址写回输出；有 hole、重复 element 或其他不规则
+映射时使用原通用 lookup decoder。稀疏接收的 COMPLETE 结束语义不变。
+
+`rvrt_paicore_runner_t` 新增一个基址字段；应用和 runtime 必须一起完整重编译，
+使用栈上 runner 的应用需核对自身栈预算。专测使用动态生成的小型 PBCA，
+覆盖实际 DATA/VOLTAGE 输出、非零基址、fallback、stride 和重新部署：
+
+```sh
+cmake -S tests/runtime_output_layout -B build/runtime_output_layout
+cmake --build build/runtime_output_layout
+ctest --test-dir build/runtime_output_layout --output-on-failure
+```
+
+该专测同时启用 stats=0/1 的 ASan/UBSan，不依赖模型资产或通用 runtime 测试工程。
+
 需要多输入、多输出、显式 timestep 或自定义同步时，改用手动 session。
 
 ## 手动 session 流程

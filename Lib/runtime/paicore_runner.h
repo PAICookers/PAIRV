@@ -51,6 +51,8 @@ typedef struct rvrt_paicore_runner_s {
     uint32_t encode_frame_capacity;
     size_t input_row_bytes;
     size_t output_row_bytes;
+    /** First output axon-bit address for a validated regular fast layout. */
+    uint32_t fast_output_base;
     bool has_fast_data_layout;
     bool has_fast_voltage_layout;
 } rvrt_paicore_runner_t;

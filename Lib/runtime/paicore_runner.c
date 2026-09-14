@@ -62,6 +62,7 @@ configure_fast_layout(rvrt_paicore_runner_t *runner)
 {
     runner->has_fast_data_layout = false;
     runner->has_fast_voltage_layout = false;
+    runner->fast_output_base = 0U;
     const bool is_data = (runner->output_view.kind == RVRT_OUTPUT_DATA) &&
                          (runner->output_view.dtype == RUN_DATA_UINT1);
     const bool is_voltage =
@@ -74,20 +75,54 @@ configure_fast_layout(rvrt_paicore_runner_t *runner)
         return RVRT_SESSION_OK;
     }
 
+    const uint32_t address_capacity =
+        UINT32_C(1) << (RVRT_WF_TS_LO_OFFSET - RVRT_WF_AX_OFFSET +
+                        runner->output_view.target_lcn);
+    uint32_t base = 0U;
+    bool base_found = false;
+    for (uint32_t address = 0U; address < address_capacity; ++address) {
+        rvrt_artifact_output_entry_t entry = {0};
+        bool found = false;
+        if (rvrt_artifact_output_mapping_find(&runner->output_view, address,
+                                              &entry,
+                                              &found) != RVRT_ARTIFACT_OK) {
+            return RVRT_SESSION_RUNTIME_ERROR;
+        }
+        if (found) {
+            if (entry.elem_idx != 0U) {
+                return RVRT_SESSION_OK;
+            }
+            base = address;
+            base_found = true;
+            break;
+        }
+    }
+    if (!base_found ||
+        (is_voltage && ((base & (RUN_VOLT_GROUP_PITCH - 1U)) != 0U))) {
+        return RVRT_SESSION_OK;
+    }
+
     for (uint32_t element = 0U; element < runner->output_view.element_count;
          ++element) {
         rvrt_artifact_output_entry_t entry = {0};
         bool found = false;
-        const uint32_t expected_axon =
-            is_voltage ? ((element >> RUN_VOLT_LANE_ADDR_SHIFT)
-                          << RUN_VOLT_GROUP_PITCH_SHIFT) |
-                             (element & (RUN_VOLT_GROUP_SIZE - 1U))
-                       : element;
-        if ((rvrt_artifact_output_mapping_find(&runner->output_view,
-                                               expected_axon, &entry,
-                                               &found) != RVRT_ARTIFACT_OK) ||
-            !found) {
+        const uint32_t offset = is_voltage
+                                    ? ((element >> RUN_VOLT_LANE_ADDR_SHIFT)
+                                       << RUN_VOLT_GROUP_PITCH_SHIFT) |
+                                          (element & (RUN_VOLT_GROUP_SIZE - 1U))
+                                    : element;
+        if ((base > UINT32_MAX - offset) ||
+            (base + offset >= address_capacity)) {
+            return RVRT_SESSION_OK;
+        }
+        const uint32_t expected_axon = base + offset;
+        if (rvrt_artifact_output_mapping_find(&runner->output_view,
+                                              expected_axon, &entry,
+                                              &found) != RVRT_ARTIFACT_OK) {
             return RVRT_SESSION_RUNTIME_ERROR;
+        }
+        if (!found) {
+            return RVRT_SESSION_OK;
         }
         if ((entry.elem_idx != element) ||
             (entry.axon_bit_idx != expected_axon)) {
@@ -97,6 +132,7 @@ configure_fast_layout(rvrt_paicore_runner_t *runner)
 
     runner->has_fast_data_layout = is_data;
     runner->has_fast_voltage_layout = is_voltage;
+    runner->fast_output_base = base;
     return RVRT_SESSION_OK;
 }
 
@@ -127,8 +163,12 @@ runner_decode_data_fast_frame(const rvrt_paicore_runner_t *runner,
         return RVRT_CODEC_STATUS_OUT_OF_RANGE;
     }
     if ((timestep >= runner->runtime.timesteps) ||
-        (axon_bit_idx >= runner->output_view.element_count) ||
-        ((size_t)timestep > (SIZE_MAX - axon_bit_idx) / output_stride)) {
+        (axon_bit_idx < runner->fast_output_base)) {
+        return RVRT_CODEC_STATUS_OK;
+    }
+    const uint32_t element = axon_bit_idx - runner->fast_output_base;
+    if ((element >= runner->output_view.element_count) ||
+        ((size_t)timestep > (SIZE_MAX - element) / output_stride)) {
         return RVRT_CODEC_STATUS_OK;
     }
 
@@ -136,7 +176,7 @@ runner_decode_data_fast_frame(const rvrt_paicore_runner_t *runner,
     if ((payload & ~1U) != 0U) {
         return RVRT_CODEC_STATUS_OK;
     }
-    const size_t output_index = (size_t)timestep * output_stride + axon_bit_idx;
+    const size_t output_index = (size_t)timestep * output_stride + element;
     if (output_index >= output_capacity) {
         return RVRT_CODEC_STATUS_OUT_OF_RANGE;
     }
@@ -166,8 +206,12 @@ runner_decode_voltage_fast_frame(const rvrt_paicore_runner_t *runner,
         return RVRT_CODEC_STATUS_OK;
     }
 
-    const uint32_t group = axon_bit_idx >> RUN_VOLT_GROUP_PITCH_SHIFT;
-    const uint32_t within_group = axon_bit_idx & (RUN_VOLT_GROUP_PITCH - 1U);
+    if (axon_bit_idx < runner->fast_output_base) {
+        return RVRT_CODEC_STATUS_OK;
+    }
+    const uint32_t relative_axon = axon_bit_idx - runner->fast_output_base;
+    const uint32_t group = relative_axon >> RUN_VOLT_GROUP_PITCH_SHIFT;
+    const uint32_t within_group = relative_axon & (RUN_VOLT_GROUP_PITCH - 1U);
     const uint32_t element = (group << RUN_VOLT_GROUP_SIZE_SHIFT) |
                              (within_group & (RUN_VOLT_LANE_STRIDE - 1U));
     const uint32_t lane = within_group >> RUN_VOLT_LANE_ADDR_SHIFT;
