@@ -65,6 +65,10 @@ typedef enum rvrt_session_sync_mode_e {
 typedef rvrt_session_status_t (*rvrt_session_rx_frame_handler_t)(
     void *user_data, const rvrt_frame_t *frame);
 
+/** @brief Internal exact-RX handler that decides when a barrier is complete. */
+typedef rvrt_session_status_t (*rvrt_session_rx_exact_frame_handler_t)(
+    void *user_data, const rvrt_frame_t *frame, bool *barrier_complete);
+
 /**
  * @brief IRQ-owned state for the currently active synchronization RX barrier.
  *
@@ -97,6 +101,14 @@ typedef struct rvrt_session_rx_barrier_s {
     void *rx_frame_handler_user_data;
     /** First non-OK rx_frame_handler status for this barrier. */
     volatile rvrt_session_status_t rx_frame_handler_status;
+    /** Optional handler that receives both work and COMPLETE frames. */
+    rvrt_session_rx_exact_frame_handler_t rx_exact_frame_handler;
+    /** Exact number of frames that the active exact barrier must consume. */
+    uint32_t exact_rx_goal;
+    /** Frames consumed by the active exact barrier, independent of stats. */
+    volatile uint32_t exact_rx_received;
+    /** Whether the exact handler has confirmed its semantic completion. */
+    volatile bool exact_semantic_complete;
 } rvrt_session_rx_barrier_t;
 
 /** @brief Session-lifetime transport counters collected when enabled. */

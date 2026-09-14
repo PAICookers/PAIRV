@@ -17,6 +17,15 @@ rvrt_session_status_t rvrt_session_sync_wait_until_with_rx_handler(
     rvrt_session_t *session, uint32_t completed_timesteps, uint32_t timeout_ms,
     rvrt_session_rx_frame_handler_t rx_frame_handler, void *user_data);
 
+rvrt_session_status_t rvrt_session_reset_model_with_exact_rx_handler(
+    rvrt_session_t *session, uint32_t rx_goal, uint32_t timeout_ms,
+    rvrt_session_rx_exact_frame_handler_t rx_frame_handler, void *user_data);
+
+rvrt_session_status_t rvrt_session_sync_wait_until_with_exact_rx_handler(
+    rvrt_session_t *session, uint32_t completed_timesteps, uint32_t rx_goal,
+    uint32_t timeout_ms, rvrt_session_rx_exact_frame_handler_t rx_frame_handler,
+    void *user_data);
+
 #ifdef __cplusplus
 }
 #endif

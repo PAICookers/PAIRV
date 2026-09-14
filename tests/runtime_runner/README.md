@@ -20,3 +20,15 @@ attachment, configuration reuse across detach, invalid transitions, sticky load
 failure, deploy cleanup, voltage-state sizing, and preserved sparse zero output.
 Tests inspect internal state only for explicit failure injection and ownership
 assertions; applications must follow the public borrowing contract.
+
+`test_exact` covers DATA and VOLTAGE unique-slot coverage, explicit zero DATA,
+COMPLETE before/after outputs, lane reordering, metadata thread identity,
+repeated inference, generic layouts, and missing/duplicate/wrong-kind/address/
+time/identity failures. Its fixed response can exceed the RX scratch capacity.
+
+Exact receive currently consumes the declared frame goal inside one IRQ. The
+hardware FIFO API exposes no nonblocking availability query: a missing frame
+may block an MMIO read, so the software timeout is not an IRQ deadline. The mock
+returns a read error for that case; it does not prove hardware boundedness.
+This behavior requires architecture review against the repository's bounded,
+nonblocking interrupt rule and an external deadline for hardware experiments.

@@ -11,6 +11,14 @@
 extern "C" {
 #endif
 
+/** @brief Output reception policy selected when a runner is prepared. */
+typedef enum rvrt_paicore_runner_rx_policy_e {
+    /** Preserve sparse output behavior: omitted DATA values decode as zero. */
+    RVRT_PAICORE_RUNNER_RX_SPARSE = 0,
+    /** Require one unique frame for every output value or VOLTAGE lane. */
+    RVRT_PAICORE_RUNNER_RX_EXACT = 1,
+} rvrt_paicore_runner_rx_policy_t;
+
 /** @brief Lifecycle state of caller-owned runner storage. */
 typedef enum rvrt_paicore_runner_state_e {
     RVRT_PAICORE_RUNNER_EMPTY = 0,
@@ -30,6 +38,7 @@ typedef struct rvrt_paicore_runner_prepare_config_s {
     rvrt_voltage_decode_state_t *voltage_state;
     uint32_t voltage_state_capacity;
     uint32_t timeout_ms;
+    rvrt_paicore_runner_rx_policy_t rx_policy;
 } rvrt_paicore_runner_prepare_config_t;
 
 /**
@@ -40,6 +49,8 @@ typedef struct rvrt_paicore_runner_prepare_config_s {
 typedef struct rvrt_paicore_runner_attach_config_s {
     rvrt_frame_t *frame_buffer;
     uint32_t frame_capacity;
+    uint32_t *coverage_bitmap;
+    uint32_t coverage_word_capacity;
 } rvrt_paicore_runner_attach_config_t;
 
 /** @brief Caller-owned resources used to deploy one PAICORE sample runner. */
@@ -70,7 +81,7 @@ typedef struct rvrt_paicore_runner_deploy_config_s {
  * or modify members during that interval.
  *
  * A prepared runner borrows immutable artifact bytes until release. An attached
- * runner additionally borrows its frame scratch until detach or
+ * runner additionally borrows its frame and coverage scratch until detach or
  * release. The current NoC IRQ implementation permits only one attached runner
  * at a time; multiple prepared runners may coexist with disjoint caller-owned
  * storage.
@@ -87,7 +98,12 @@ typedef struct rvrt_paicore_runner_s {
     uint32_t encode_frame_capacity;
     size_t input_row_bytes;
     size_t output_row_bytes;
+    uint32_t *coverage_bitmap;
+    uint32_t coverage_word_capacity;
+    uint32_t exact_slot_count;
+    uint32_t expected_thread_id;
     uint32_t fast_output_base;
+    rvrt_paicore_runner_rx_policy_t rx_policy;
     rvrt_paicore_runner_state_t state;
     bool config_loaded;
     bool config_load_failed;
@@ -117,8 +133,8 @@ rvrt_paicore_runner_prepare(rvrt_paicore_runner_t *runner,
  * @brief Attach a prepared runner to the shared IRQ/session scratch.
  *
  * runner must be PREPARED and no other runner may be attached. On success it
- * becomes ATTACHED and borrows the supplied frame buffer until detach or
- * release.
+ * becomes ATTACHED and borrows the supplied frame buffer and, for EXACT RX,
+ * coverage bitmap until detach or release.
  */
 rvrt_session_status_t
 rvrt_paicore_runner_attach(rvrt_paicore_runner_t *runner,

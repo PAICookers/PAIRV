@@ -246,6 +246,16 @@ rvrt_artifact_status_t rvrt_artifact_thread_root_core_offset(
     rvrt_artifact_core_offset_t *root_core_offset);
 
 /**
+ * @brief Read the hardware completion identity for one artifact thread.
+ * @param artifact Verified artifact returned by rvrt_artifact_read().
+ * @param thread_index Zero-based thread array index.
+ * @param thread_id Receives the serialized hardware thread identifier.
+ */
+rvrt_artifact_status_t rvrt_artifact_thread_id(const rvrt_artifact_t *artifact,
+                                               uint32_t thread_index,
+                                               uint32_t *thread_id);
+
+/**
  * @brief Read static timing and decode metadata for one I/O thread.
  * @param artifact Verified artifact containing IOMapping.threads.
  * @param thread_index Zero-based index less than rvrt_artifact_thread_count().

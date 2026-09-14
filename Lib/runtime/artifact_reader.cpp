@@ -557,6 +557,22 @@ rvrt_artifact_status_t rvrt_artifact_thread_root_core_offset(
     return fill_core_offset(thread->root_core_offset(), root_core_offset);
 }
 
+rvrt_artifact_status_t rvrt_artifact_thread_id(const rvrt_artifact_t *artifact,
+                                               uint32_t thread_index,
+                                               uint32_t *thread_id)
+{
+    if (thread_id == nullptr) {
+        return RVRT_ARTIFACT_NULL_ARGUMENT;
+    }
+    const fbs::ThreadIOMapping *thread = nullptr;
+    const auto status = thread_at(artifact, thread_index, &thread);
+    if (status != RVRT_ARTIFACT_OK) {
+        return status;
+    }
+    *thread_id = thread->thread_id();
+    return RVRT_ARTIFACT_OK;
+}
+
 rvrt_artifact_status_t
 rvrt_artifact_thread_runtime(const rvrt_artifact_t *artifact,
                              uint32_t thread_index,

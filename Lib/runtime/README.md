@@ -247,3 +247,21 @@ Caller-owned runner storage must be zero-initialized before first use; rebuild
 all consumers when changing the public structure layout.
 
 Focused native ASan/UBSan checks are in `tests/runtime_runner`.
+
+## Exact runner reception
+
+Preparation can opt into `RVRT_PAICORE_RUNNER_RX_EXACT`. Attach then requires a
+caller-owned coverage bitmap with one bit per timestep/element (DATA) or
+per timestep/element/lane (VOLTAGE), rounded up to 32-bit words. Exact mode
+requires pipeline latency one, DATA UINT1 or VOLTAGE INT32 outputs, and matching
+output mapping cardinality. Every output slot must arrive once, including zero
+DATA values, and COMPLETE must carry the artifact metadata thread ID, not the
+thread-array index. Integrity errors fault the session; release does not repair
+hardware or flush stale frames. Sparse deploy behavior remains available.
+
+The exact IRQ loop consumes its declared receive goal in one interrupt. A
+missing frame may stall the blocking hardware FIFO read; the foreground timeout
+cannot bound that stall. This implementation therefore requires architecture
+review before satisfying the repository's bounded, nonblocking IRQ requirement.
+Host fault tests model a missing frame as an MMIO read error and are not evidence
+of a hardware deadline. No new board acceptance is implied by these host tests.
