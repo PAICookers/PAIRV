@@ -1,0 +1,3 @@
+# Keep frozen model data out of the default source review; retain its guide.
+application/baremetal/snn_head/artifacts/three_chip/** linguist-generated=true
+application/baremetal/snn_head/artifacts/three_chip/README.md linguist-generated=false
