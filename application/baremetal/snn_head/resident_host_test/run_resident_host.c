@@ -12,6 +12,10 @@ void resident_test_start_inference(void);
 uint64_t resident_test_startup_writes(void);
 uint32_t resident_test_illegal_writes(void);
 void resident_test_expect_config_frames(uint64_t);
+#if SNN_HEAD_AUDIT
+#include "snn_head_audit.h"
+void resident_test_audit_fault(bool);
+#endif
 
 #define CHECK(expr, message)                                                   \
     do {                                                                       \
@@ -115,7 +119,26 @@ int main(int argc, char **argv)
     CHECK(!snn_head_run_chunk(input, action),
           "inference requires full initialization");
     resident_test_expect_config_frames(expected_config);
+#if SNN_HEAD_AUDIT
+    if (argc > 1 && strcmp(argv[1], "auditfail") == 0) {
+        resident_test_audit_fault(true);
+        CHECK(!snn_head_initialize(), "SRAM corruption prevents READY");
+        CHECK(!snn_head_run_chunk(input, action),
+              "corrupt deployment cannot infer");
+        CHECK(!snn_head_audit_stats()->passed, "failed audit is visible");
+        CHECK(init_count == 0 && sync_count == 0,
+              "no model controls after bad readback");
+        puts("PASS: corrupted parameter readback prevents service");
+        return 0;
+    }
+#endif
     CHECK(snn_head_initialize(), "all layers initialize");
+#if SNN_HEAD_AUDIT
+    CHECK(snn_head_audit_stats()->passed &&
+              snn_head_audit_stats()->compared_frames * 8U ==
+                  8465120U + 143U * 24U,
+          "all parameter and CORE bytes verified after all five loads");
+#endif
     CHECK(resident_test_startup_writes() == expected_config,
           "each config loaded exactly once");
     CHECK(snn_head_initialize(), "initialization is idempotent");
@@ -158,6 +181,13 @@ int main(int argc, char **argv)
                       (i < 3 ? 12288U : (i == 3 ? 49152U : 224U)),
                   "all explicit DATA and VOLTAGE lanes received");
         }
+#if SNN_HEAD_AUDIT
+        CHECK(snn_head_verify_residency(),
+              "same deployment retains every weight");
+        CHECK(snn_head_audit_stats()->compared_frames * 8U == 8268288U,
+              "post-inference audit compares weights, excludes dynamic neuron "
+              "state");
+#endif
     }
     CHECK(resident_test_illegal_writes() == 0,
           "no configuration stream during inference");

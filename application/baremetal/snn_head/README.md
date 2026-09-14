@@ -155,9 +155,8 @@ not hardware startup or a complete stack-usage bound.
 
 Set `SNN_HEAD_RESIDENT=1` to select the fixed bundle in
 [`artifacts/three_chip/`](artifacts/three_chip/README.md). Default builds retain
-the single-chip assets and deployment path. This application increment provides
-resident initialization and repeated chunks; residency readback and startup
-audit records are added separately.
+the single-chip assets and deployment path. Resident initialization and repeated
+chunks can optionally include SRAM readback with `SNN_HEAD_AUDIT=1`.
 
 All five parameter groups remain loaded: FC1, FC2 and FC3 use chip0, Block0
 uses chip1, and Block1 uses chip2. CPU0 executes preprocessing and serially
@@ -216,6 +215,50 @@ The Linux ASan/UBSan suite checks one-time configuration, repeated complete
 eight-step chunks, output lane identity, zero warm deployment counters, and
 failure stopping later layers and requests. Mocks are host control-flow evidence,
 not board numerical or performance acceptance.
+
+### Resident Audit and Host Records
+
+`SNN_HEAD_AUDIT=1` requires resident assets. Before the first INIT and READY,
+firmware compares 143 CORE records and 8,465,120 parameter-SRAM bytes against
+the same ELF's PBCA payloads, using 8,450 exact receive windows. After each
+successful chunk, `snn_head_verify_residency()` compares 8,268,288 immutable
+weight bytes across 8,158 windows, excluding mutable neuron state. An audit
+failure stops service until platform recovery and a fresh application start.
+The generated audit-plan header and five PBCA files form one immutable set.
+
+Build the resident command above with `SNN_HEAD_AUDIT=1`. Audit time is outside
+the warm chunk timing interval. Startup emits an initialization record, the
+canonical audit-plan SHA-256, a `phase=before_init` audit record, and READY.
+The audit implementation uses the runtime's internal exact exchange interface;
+it inherits the fixed-window FIFO/MMIO and external deadline limitations above.
+
+The service uses NSNN v1 for binary requests and results. A host must validate
+startup records and the plan identity before INPUT. After RESULT, consume the
+timing report through `SNN_HEAD_TIMING_END` when timing is enabled, then validate
+the `phase=after_chunk_weights` record before issuing another request. RESULT
+alone does not establish audit success, since readback happens afterward.
+Resident text is formatted with bounded decimal/hex writers, avoiding target
+`printf` differences for 64-bit values. Formatting failure stops the service.
+
+[`tools/snn_head_resident_protocol.py`](tools/snn_head_resident_protocol.py)
+validates startup, audit, and resident timing records without importing board
+control tools. It complements the existing NSNN transaction helpers; callers
+still own serial transport, log capture, request serialization, deadlines, and
+platform recovery. The generic diagnostic CLI is not a complete resident client.
+
+```sh
+cmake -S application/baremetal/snn_head/resident_host_test \
+  -B /tmp/snn-resident-audit-build -DSNN_HEAD_AUDIT=ON
+cmake --build /tmp/snn-resident-audit-build -j2
+ctest --test-dir /tmp/snn-resident-audit-build --output-on-failure
+```
+
+In addition to lifecycle tests, this suite checks that corrupted SRAM blocks
+READY, full startup and immutable-only readback cover the expected byte counts,
+and C formatting/Python parsing agree on the wire records. Preserve the
+frozen Scheme 1.0 identities and historical verification scope in the
+[asset guide](artifacts/three_chip/README.md); new builds require their own
+identity and host/board evidence.
 
 ## Host Test
 

@@ -71,6 +71,16 @@ static void write_frame(uint32_t high, uint32_t low)
         return;
     }
     const uint32_t kind = high >> 28;
+#if SNN_HEAD_AUDIT
+    if (kind == 4 || kind == 6) {
+        extern uint32_t resident_test_audit(uint32_t, uint32_t, rvrt_frame_t *);
+        assert(cursor == count);
+        cursor = 0;
+        count = resident_test_audit(high, low, frames);
+        pump();
+        return;
+    }
+#endif
     if (kind == 0xC || kind == 0xD) {
         assert(cursor == count);
         cursor = 0;

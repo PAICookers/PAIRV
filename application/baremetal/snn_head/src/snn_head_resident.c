@@ -1,4 +1,7 @@
 #include "snn_head_internal.h"
+#if SNN_HEAD_AUDIT
+#include "snn_head_audit.h"
+#endif
 
 #if SNN_HEAD_RESIDENT
 
@@ -34,6 +37,41 @@ static const rvrt_paicore_runner_attach_config_t receiver = {
     .coverage_bitmap = coverage,
     .coverage_word_capacity = sizeof(coverage) / sizeof(coverage[0]),
 };
+
+#if SNN_HEAD_AUDIT
+static bool audit_all(bool immutable_only)
+{
+    bool passed = true;
+    snn_head_audit_begin();
+    for (unsigned i = 0; i < SNN_HEAD_LAYER_COUNT; ++i) {
+        resident_layer_t *const layer = &layers[i];
+        if (rvrt_paicore_runner_attach(&layer->runner, &receiver) !=
+            RVRT_SESSION_OK) {
+            passed = false;
+            break;
+        }
+        const bool verified = snn_head_audit_layer(
+            &layer->runner, &layer->context.artifact, i, immutable_only);
+        const rvrt_session_status_t detached =
+            rvrt_paicore_runner_detach(&layer->runner);
+        if (!verified || detached != RVRT_SESSION_OK) {
+            passed = false;
+            break;
+        }
+    }
+    snn_head_audit_end(passed);
+    return passed;
+}
+
+bool snn_head_verify_residency(void)
+{
+    if (!initialization.ready)
+        return false;
+    if (!audit_all(true))
+        initialization.ready = false;
+    return initialization.ready;
+}
+#endif
 
 const snn_head_initialization_stats_t *snn_head_initialization_stats(void)
 {
@@ -102,6 +140,12 @@ bool snn_head_initialize(void)
         initialization.config_frames += words / 2U;
     }
     initialization.load_cycles = __get_rv_cycle() - load_start;
+#if SNN_HEAD_AUDIT
+    const bool verified = audit_all(false);
+    initialization.audit_cycles = snn_head_audit_stats()->cycles;
+    if (!verified)
+        goto failed;
+#endif
     initialization.total_cycles = __get_rv_cycle() - start;
     initialization.ready = true;
     return true;

@@ -6,7 +6,7 @@
  *
  * 普通构建对外暴露 snn_head_run_chunk()，执行一个完整的 8-timestep
  * action chunk。SNN_HEAD_RESIDENT=1 时还暴露常驻参数初始化与状态查询接口；
- * 五层内部实现
+ * SNN_HEAD_AUDIT=1 时额外暴露诊断性驻留校验接口。五层内部实现
  * （fc1_lif / block_lif / fc2 / fc3）及其共享状态见 snn_head_internal.h，
  * 调用方（如 main.c）只需 include 本头文件。
  */
@@ -19,6 +19,12 @@
 #endif
 #if SNN_HEAD_RESIDENT != 0 && SNN_HEAD_RESIDENT != 1
 #error "SNN_HEAD_RESIDENT must be 0 or 1"
+#endif
+#ifndef SNN_HEAD_AUDIT
+#define SNN_HEAD_AUDIT 0
+#endif
+#if SNN_HEAD_AUDIT && !SNN_HEAD_RESIDENT
+#error "SNN_HEAD_AUDIT requires resident assets"
 #endif
 
 #define SNN_HEAD_TIMESTEPS 8U
@@ -45,6 +51,7 @@ typedef struct {
     uint64_t total_cycles;
     uint64_t prepare_cycles;
     uint64_t load_cycles;
+    uint64_t audit_cycles;
     uint32_t config_frames;
     bool ready;
 } snn_head_initialization_stats_t;
@@ -55,6 +62,10 @@ typedef struct {
  */
 bool snn_head_initialize(void);
 const snn_head_initialization_stats_t *snn_head_initialization_stats(void);
+#if SNN_HEAD_AUDIT
+/** Diagnostic-only readback of immutable weights in the current deployment. */
+bool snn_head_verify_residency(void);
+#endif
 #endif
 
 /**
