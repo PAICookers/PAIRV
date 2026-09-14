@@ -228,3 +228,22 @@ ctest --test-dir /tmp/pairv-runtime-build --output-on-failure
 - [`frame_codec.h`](frame_codec.h)：输入/输出 frame 编解码 API。
 - [`session.h`](session.h)：手动 session、同步和 RX handler API。
 - [`paicore_runner.h`](paicore_runner.h)：单 runner 便捷 API。
+
+## Prepared runner lifecycle
+
+`rvrt_paicore_runner_prepare()` validates immutable artifact bytes without taking
+IRQ ownership. Multiple zero-initialized runners may be prepared simultaneously.
+`attach()` borrows shared frame scratch and acquires the one active session;
+`load_config()` submits static configuration once. `detach()` releases the IRQ
+and scratch while retaining prepared metadata and successful configuration state.
+`release()` clears the runner and ends artifact borrowing. Neither operation
+unloads PAICORE configuration nor repairs hardware after a failed transaction.
+
+A failed configuration load is sticky: release the runner and perform platform
+recovery before preparing fresh storage. Invalid prepare/deploy paths return the
+actual error and relinquish acquired resources. The existing deploy API composes
+prepare, attach and load, preserving sparse reception and per-sample INIT.
+Caller-owned runner storage must be zero-initialized before first use; rebuild
+all consumers when changing the public structure layout.
+
+Focused native ASan/UBSan checks are in `tests/runtime_runner`.

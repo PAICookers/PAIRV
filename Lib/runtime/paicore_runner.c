@@ -372,42 +372,26 @@ static bool voltage_state_capacity(uint32_t timesteps, uint32_t element_count,
 }
 
 rvrt_session_status_t
-rvrt_paicore_runner_deploy(rvrt_paicore_runner_t *runner,
-                           const rvrt_paicore_runner_deploy_config_t *config)
+rvrt_paicore_runner_prepare(rvrt_paicore_runner_t *runner,
+                            const rvrt_paicore_runner_prepare_config_t *config)
 {
     if ((runner == NULL) || (config == NULL)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
-    const rvrt_session_status_t release_status =
-        rvrt_session_deinit(&runner->session);
-    if (release_status != RVRT_SESSION_OK) {
-        return release_status;
+    if (runner->state != RVRT_PAICORE_RUNNER_EMPTY) {
+        return RVRT_SESSION_RUNTIME_ERROR;
     }
     memset(runner, 0, sizeof(*runner));
 
     rvrt_session_status_t failure_status = RVRT_SESSION_RUNTIME_ERROR;
-    bool session_initialized = false;
 
-    if ((config->artifact_data == NULL) || (config->frame_buffer == NULL) ||
-        (config->frame_capacity == 0U) || (config->timeout_ms == 0U)) {
+    if ((config->artifact_data == NULL) || (config->timeout_ms == 0U)) {
         goto runtime_error;
     }
     if (rvrt_artifact_read(config->artifact_data, config->artifact_size,
                            &runner->artifact) != RVRT_ARTIFACT_OK) {
         goto runtime_error;
     }
-
-    const rvrt_session_config_t session_config = {
-        .artifact = &runner->artifact,
-        .thread_index = 0U,
-        .rx_frames = config->frame_buffer,
-        .rx_capacity = config->frame_capacity,
-    };
-    failure_status = rvrt_session_init(&runner->session, &session_config);
-    if (failure_status != RVRT_SESSION_OK) {
-        goto runtime_error;
-    }
-    session_initialized = true;
 
     if ((rvrt_artifact_thread_runtime(&runner->artifact, 0U,
                                       &runner->runtime) != RVRT_ARTIFACT_OK) ||
@@ -468,28 +452,109 @@ rvrt_paicore_runner_deploy(rvrt_paicore_runner_t *runner,
     if (configure_fast_layout(runner) != RVRT_SESSION_OK) {
         goto runtime_error;
     }
-
     runner->voltage_state = config->voltage_state;
     runner->voltage_state_capacity = config->voltage_state_capacity;
     runner->timeout_ms = config->timeout_ms;
-    runner->encode_frame_capacity = config->frame_capacity;
-
-    const rvrt_session_status_t load_status =
-        rvrt_session_load_config(&runner->session);
-    if (load_status != RVRT_SESSION_OK) {
-        RV_DEBUG_LOGE("paicore_runner", "load config failed: %s",
-                      rvrt_session_status_string(load_status));
-        failure_status = load_status;
-        goto runtime_error;
-    }
+    runner->state = RVRT_PAICORE_RUNNER_PREPARED;
     return RVRT_SESSION_OK;
 
 runtime_error:
-    if (session_initialized) {
-        (void)rvrt_session_deinit(&runner->session);
-    }
     memset(runner, 0, sizeof(*runner));
     return failure_status;
+}
+
+rvrt_session_status_t
+rvrt_paicore_runner_attach(rvrt_paicore_runner_t *runner,
+                           const rvrt_paicore_runner_attach_config_t *config)
+{
+    if ((runner == NULL) || (config == NULL) ||
+        (runner->state != RVRT_PAICORE_RUNNER_PREPARED) ||
+        runner->config_load_failed || (config->frame_buffer == NULL) ||
+        (config->frame_capacity == 0U)) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    const rvrt_session_config_t session_config = {
+        .artifact = &runner->artifact,
+        .thread_index = 0U,
+        .rx_frames = config->frame_buffer,
+        .rx_capacity = config->frame_capacity,
+    };
+    const rvrt_session_status_t status =
+        rvrt_session_init(&runner->session, &session_config);
+    if (status != RVRT_SESSION_OK) {
+        return status;
+    }
+    runner->encode_frame_capacity = config->frame_capacity;
+    runner->state = RVRT_PAICORE_RUNNER_ATTACHED;
+    return RVRT_SESSION_OK;
+}
+
+rvrt_session_status_t
+rvrt_paicore_runner_load_config(rvrt_paicore_runner_t *runner)
+{
+    if ((runner == NULL) || (runner->state != RVRT_PAICORE_RUNNER_ATTACHED) ||
+        runner->config_loaded || runner->config_load_failed) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    const rvrt_session_status_t status =
+        rvrt_session_load_config(&runner->session);
+    if (status == RVRT_SESSION_OK) {
+        runner->config_loaded = true;
+    } else {
+        runner->config_load_failed = true;
+    }
+    return status;
+}
+
+rvrt_session_status_t rvrt_paicore_runner_detach(rvrt_paicore_runner_t *runner)
+{
+    if ((runner == NULL) || (runner->state != RVRT_PAICORE_RUNNER_ATTACHED)) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    const rvrt_session_status_t status = rvrt_session_deinit(&runner->session);
+    if (status == RVRT_SESSION_OK) {
+        runner->encode_frame_capacity = 0U;
+        runner->state = RVRT_PAICORE_RUNNER_PREPARED;
+    }
+    return status;
+}
+
+rvrt_session_status_t
+rvrt_paicore_runner_deploy(rvrt_paicore_runner_t *runner,
+                           const rvrt_paicore_runner_deploy_config_t *config)
+{
+    if ((runner == NULL) || (config == NULL)) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
+    const rvrt_session_status_t release_status =
+        rvrt_paicore_runner_release(runner);
+    if (release_status != RVRT_SESSION_OK) {
+        return release_status;
+    }
+    const rvrt_paicore_runner_prepare_config_t prepare_config = {
+        .artifact_data = config->artifact_data,
+        .artifact_size = config->artifact_size,
+        .voltage_state = config->voltage_state,
+        .voltage_state_capacity = config->voltage_state_capacity,
+        .timeout_ms = config->timeout_ms,
+    };
+    rvrt_session_status_t status =
+        rvrt_paicore_runner_prepare(runner, &prepare_config);
+    if (status != RVRT_SESSION_OK) {
+        return status;
+    }
+    const rvrt_paicore_runner_attach_config_t attach_config = {
+        .frame_buffer = config->frame_buffer,
+        .frame_capacity = config->frame_capacity,
+    };
+    status = rvrt_paicore_runner_attach(runner, &attach_config);
+    if (status == RVRT_SESSION_OK) {
+        status = rvrt_paicore_runner_load_config(runner);
+    }
+    if (status != RVRT_SESSION_OK) {
+        (void)rvrt_paicore_runner_release(runner);
+    }
+    return status;
 }
 
 rvrt_session_status_t rvrt_paicore_runner_release(rvrt_paicore_runner_t *runner)
@@ -497,7 +562,13 @@ rvrt_session_status_t rvrt_paicore_runner_release(rvrt_paicore_runner_t *runner)
     if (runner == NULL) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
-    const rvrt_session_status_t status = rvrt_session_deinit(&runner->session);
+    rvrt_session_status_t status = RVRT_SESSION_OK;
+    if (runner->state == RVRT_PAICORE_RUNNER_ATTACHED) {
+        status = rvrt_paicore_runner_detach(runner);
+    } else if (runner->state != RVRT_PAICORE_RUNNER_PREPARED &&
+               runner->state != RVRT_PAICORE_RUNNER_EMPTY) {
+        return RVRT_SESSION_RUNTIME_ERROR;
+    }
     if (status == RVRT_SESSION_OK) {
         memset(runner, 0, sizeof(*runner));
     }
@@ -508,7 +579,8 @@ rvrt_session_status_t
 rvrt_paicore_runner_get_stats(const rvrt_paicore_runner_t *runner,
                               rvrt_session_stats_t *stats)
 {
-    if ((runner == NULL) || (runner->session.artifact != &runner->artifact)) {
+    if ((runner == NULL) || (runner->state != RVRT_PAICORE_RUNNER_ATTACHED) ||
+        (runner->session.artifact != &runner->artifact)) {
         return RVRT_SESSION_RUNTIME_ERROR;
     }
     return rvrt_session_get_stats(&runner->session, stats);
@@ -519,7 +591,9 @@ rvrt_session_status_t rvrt_paicore_runner_run_sample_profiled(
     size_t input_stride, void *output, size_t output_capacity,
     size_t output_stride, rvrt_paicore_runner_sample_timing_t *timing)
 {
-    if ((runner == NULL) || (runner->session.artifact != &runner->artifact) ||
+    if ((runner == NULL) || (runner->state != RVRT_PAICORE_RUNNER_ATTACHED) ||
+        !runner->config_loaded ||
+        (runner->session.artifact != &runner->artifact) ||
         (runner->input_view.entries == NULL) ||
         (runner->output_view.entries == NULL) || (input == NULL) ||
         (output == NULL) || (runner->encode_frame_capacity == 0U)) {
@@ -583,7 +657,6 @@ rvrt_session_status_t rvrt_paicore_runner_run_sample_profiled(
         memset(runner->voltage_state, 0,
                (size_t)required_voltage_state * sizeof(*runner->voltage_state));
     }
-
     RV_DEBUG_LOGI("paicore_runner", "sample reset begin");
 #if RVRT_ENABLE_STATS
     const rv_counter_t init_round_trip_start = __get_rv_cycle();

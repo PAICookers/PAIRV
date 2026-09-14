@@ -11,6 +11,37 @@
 extern "C" {
 #endif
 
+/** @brief Lifecycle state of caller-owned runner storage. */
+typedef enum rvrt_paicore_runner_state_e {
+    RVRT_PAICORE_RUNNER_EMPTY = 0,
+    RVRT_PAICORE_RUNNER_PREPARED = 1,
+    RVRT_PAICORE_RUNNER_ATTACHED = 2,
+} rvrt_paicore_runner_state_t;
+
+/**
+ * @brief Immutable resources parsed and validated without taking the IRQ.
+ *
+ * artifact_data is borrowed by a successful prepare and must remain valid and
+ * byte-for-byte unchanged until rvrt_paicore_runner_release().
+ */
+typedef struct rvrt_paicore_runner_prepare_config_s {
+    const uint8_t *artifact_data;
+    size_t artifact_size;
+    rvrt_voltage_decode_state_t *voltage_state;
+    uint32_t voltage_state_capacity;
+    uint32_t timeout_ms;
+} rvrt_paicore_runner_prepare_config_t;
+
+/**
+ * @brief Shared scratch resources borrowed while one runner is attached.
+ *
+ * The referenced scratch storage must remain valid until detach or release.
+ */
+typedef struct rvrt_paicore_runner_attach_config_s {
+    rvrt_frame_t *frame_buffer;
+    uint32_t frame_capacity;
+} rvrt_paicore_runner_attach_config_t;
+
 /** @brief Caller-owned resources used to deploy one PAICORE sample runner. */
 typedef struct rvrt_paicore_runner_deploy_config_s {
     /** Verified artifact bytes; must remain valid while the runner is deployed.
@@ -33,11 +64,16 @@ typedef struct rvrt_paicore_runner_deploy_config_s {
 /**
  * @brief Deployed sample-level runner for the first PAICORE artifact I/O pair.
  *
- * Applications own this structure's storage; runtime owns its member state
- * from successful deploy through release. Applications must not inspect or
- * modify members during that interval. Artifact bytes and buffer pointers are
- * borrowed. The current NoC IRQ implementation permits one deployed runner at
- * a time.
+ * Applications own this structure's storage and must zero-initialize it before
+ * its first prepare or deploy. The runtime owns its member state from a
+ * successful prepare or deploy through release; applications must not inspect
+ * or modify members during that interval.
+ *
+ * A prepared runner borrows immutable artifact bytes until release. An attached
+ * runner additionally borrows its frame scratch until detach or
+ * release. The current NoC IRQ implementation permits only one attached runner
+ * at a time; multiple prepared runners may coexist with disjoint caller-owned
+ * storage.
  */
 typedef struct rvrt_paicore_runner_s {
     rvrt_artifact_t artifact;
@@ -51,11 +87,62 @@ typedef struct rvrt_paicore_runner_s {
     uint32_t encode_frame_capacity;
     size_t input_row_bytes;
     size_t output_row_bytes;
-    /** First output axon-bit address for a validated regular fast layout. */
     uint32_t fast_output_base;
+    rvrt_paicore_runner_state_t state;
+    bool config_loaded;
+    bool config_load_failed;
     bool has_fast_data_layout;
     bool has_fast_voltage_layout;
 } rvrt_paicore_runner_t;
+
+/**
+ * @brief Parse and validate an artifact without taking shared IRQ ownership.
+ *
+ * runner must be zero-initialized and EMPTY. On success it becomes PREPARED
+ * and borrows config->artifact_data until release. If validation of an EMPTY
+ * runner fails, it is cleared back to EMPTY and owns no caller resource.
+ *
+ * @return RVRT_SESSION_OK when the runner is prepared.
+ * @return RVRT_SESSION_BUFFER_TOO_SMALL when VOLTAGE state is insufficient.
+ * @return RVRT_SESSION_SCHEDULE_UNSUPPORTED when the input schedule does not
+ *         fit the supported timestamp domain.
+ * @return RVRT_SESSION_RUNTIME_ERROR for invalid resources, malformed or
+ *         unsupported artifact metadata, or a non-EMPTY runner.
+ */
+rvrt_session_status_t
+rvrt_paicore_runner_prepare(rvrt_paicore_runner_t *runner,
+                            const rvrt_paicore_runner_prepare_config_t *config);
+
+/**
+ * @brief Attach a prepared runner to the shared IRQ/session scratch.
+ *
+ * runner must be PREPARED and no other runner may be attached. On success it
+ * becomes ATTACHED and borrows the supplied frame buffer until detach or
+ * release.
+ */
+rvrt_session_status_t
+rvrt_paicore_runner_attach(rvrt_paicore_runner_t *runner,
+                           const rvrt_paicore_runner_attach_config_t *config);
+
+/**
+ * @brief Submit static configuration for an attached runner exactly once.
+ *
+ * A successful load is retained across detach/attach cycles. A failed load is
+ * sticky: do not retry inference or configuration with this runner. Detach and
+ * release it, then perform any required platform recovery before starting with
+ * fresh zero-initialized storage.
+ */
+rvrt_session_status_t
+rvrt_paicore_runner_load_config(rvrt_paicore_runner_t *runner);
+
+/**
+ * @brief Relinquish shared IRQ/scratch ownership and return to PREPARED.
+ *
+ * No barrier may be active. Artifact-derived state and a successful config
+ * load remain cached for a later attach. This call does not unload PAICORE
+ * configuration or recover hardware after a transport failure.
+ */
+rvrt_session_status_t rvrt_paicore_runner_detach(rvrt_paicore_runner_t *runner);
 
 /**
  * @brief Caller-owned timing storage for one complete runner sample.
@@ -77,12 +164,13 @@ typedef struct rvrt_paicore_runner_sample_timing_s {
 } rvrt_paicore_runner_sample_timing_t;
 
 /**
- * @brief Parse, configure, and prepare the first PAICORE I/O pair for samples.
+ * @brief Parse, attach, configure, and prepare the first PAICORE I/O pair.
  *
- * The runner reads the artifact, initializes its internal session on thread
- * zero, loads static configuration frames, and derives row sizes from mapping
- * zero. Input encoding reuses frame_buffer before the RX barrier becomes
- * active.
+ * Before its first use, runner must be zero-initialized. Deploy first releases
+ * any valid existing runner lifecycle state, then reads the artifact,
+ * initializes its internal session on thread zero, loads static configuration
+ * frames, and derives row sizes from mapping zero. Input encoding reuses
+ * frame_buffer before the RX barrier becomes active.
  *
  * @return RVRT_SESSION_OK when the runner is ready.
  * @return RVRT_SESSION_BUFFER_TOO_SMALL when VOLTAGE state is insufficient.
@@ -97,9 +185,11 @@ rvrt_paicore_runner_deploy(rvrt_paicore_runner_t *runner,
                            const rvrt_paicore_runner_deploy_config_t *config);
 
 /**
- * @brief Release IRQ/session ownership and clear a deployed runner.
+ * @brief Release IRQ/session ownership and clear a prepared or deployed runner.
  *
- * This does not recover PAICORE or flush stale RX data after a failed barrier.
+ * This ends the artifact and scratch borrowing intervals and returns runner to
+ * EMPTY. It does not recover PAICORE or flush stale RX data after a failed
+ * barrier.
  * @return RVRT_SESSION_OK after release; otherwise a session lifecycle error.
  */
 rvrt_session_status_t
