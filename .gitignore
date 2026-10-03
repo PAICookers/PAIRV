@@ -77,8 +77,10 @@ setup_config.sh
 .cache/
 build/
 
+# Local task/session notes
+tasks/
+
 # Local agent/tooling files
-.agents/
 .claude/
 skills-lock.json
 .mcp.json

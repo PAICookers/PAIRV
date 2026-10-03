@@ -1,5 +1,15 @@
 # PAIRV Development Guide
 
+## Instruction Discovery
+
+- This root `AGENTS.md` is the repository-wide instruction entrypoint and
+  applies to code, tests, documentation, examples, fixtures, plans, and
+  review output.
+- For code changes, also read `.codex/project-rules.md`; `.codex/` is a
+  supplemental harness directory and is not assumed to be auto-loaded.
+- Read `tasks/todo.md` and `tasks/lessons.md` before non-trivial work. Record
+  the plan, workspace decision, verification, and reusable lessons there.
+
 ## Project scope
 
 PAIRV is a self-contained Nuclei SDK-style project for the evalsoc
@@ -31,6 +41,11 @@ that should apply across contributions.
   in the common build infrastructure.
 - Follow the repository `.clang-format`: LLVM-based C/C++ style, four-space
   indentation, Linux braces, and no tabs. Format changed C/C++ before review.
+- Leave necessary comments or docstrings beside non-obvious protocol,
+  serialization, timing, resource-lifetime, hardware-boundary, and safety
+  logic. Do not add comments that merely restate the code.
+- Run `clang-format --dry-run --Werror` with the repository `.clang-format` on
+  every changed C/C++ file before review; format the files when the check fails.
 - Validate inputs and hardware-facing boundaries, handle failures explicitly,
   and keep interrupt paths bounded, nonblocking, allocation-free, and quiet.
 - Add focused tests for non-trivial behavior and document public APIs or
@@ -58,3 +73,19 @@ that should apply across contributions.
   focused and stage only files belonging to the requested change.
 - Do not commit local credentials, machine-specific paths, transient logs, or
   generated metadata unless the task explicitly requires them.
+
+## Privacy And Codebase Memory
+
+- Do not put machine-specific absolute paths in source, tests, documentation,
+  examples, fixtures, logs, or committed test output. Use repository-relative
+  paths, placeholders, environment variables, or configurable paths.
+- Do not expose usernames, home directories, hostnames, serial numbers,
+  device identifiers, credentials, tokens, private URLs, or other personal or
+  machine-identifying data. Redact before committing or publishing output.
+- Keep the persisted Codebase Memory index scoped by `.cbmignore`; do not index
+  untracked directories or local evidence, build outputs, caches, credentials,
+  or generated metadata.
+- Refresh the registered repository index after structural source changes and
+  verify status with the exact project name returned by `list_projects`.
+- Treat index coverage as best-effort evidence: report skipped, partial, or
+  timeout ranges instead of claiming exhaustive parsing.
