@@ -3,6 +3,10 @@
 
 #include "frame_codec.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define RVRT_WF_TARGET_LCN_MAX 7U
 #define RVRT_WF_TS_HI_WORD_OFFSET 28U
 #define RVRT_WF_TS_LO_OFFSET 17U
@@ -74,7 +78,7 @@ rvrt_store_voltage_lane(int32_t *output, size_t output_index,
 /*
  * Private runner support. This is deliberately not part of frame_codec.h:
  * applications either decode a complete DATA window or own a manual protocol
- * schedule, while only paicore_runner needs timestamp-scattered incremental
+ * schedule, while only thread_runner needs timestamp-scattered incremental
  * RX. The caller supplies a complete sample window, so frames outside that
  * window are ignored without touching output or VOLTAGE lane state.
  */
@@ -84,5 +88,23 @@ rvrt_codec_status_t rvrt_decode_output_frames_incremental(
     size_t output_size, size_t output_stride,
     rvrt_voltage_decode_state_t *voltage_state,
     uint32_t voltage_state_capacity);
+
+/* Verify address formulas once, outside IRQ. Noncanonical layouts use the
+ * generic mapping decoder. These flags must only be used with this view. */
+rvrt_codec_status_t
+rvrt_output_fast_layout(const rvrt_artifact_output_mapping_view_t *view,
+                        bool *data, bool *voltage);
+
+/* O(1) scatter for a layout verified by rvrt_output_fast_layout(). Runner
+ * validates sample capacity/alignment and rejects future timestamps first. */
+rvrt_codec_status_t rvrt_decode_output_fast_frame(
+    const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
+    uint32_t total_timesteps, uint8_t *output, size_t output_size,
+    size_t output_stride, rvrt_voltage_decode_state_t *voltage_state,
+    uint32_t voltage_state_capacity);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* RVRT_FRAME_CODEC_INTERNAL_H */

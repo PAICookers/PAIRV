@@ -1330,7 +1330,8 @@ struct ThreadIOMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_RUNTIME = 8,
     VT_INPUT_MAPPINGS = 10,
     VT_OUTPUT_MAPPINGS = 12,
-    VT_CORE_TICKS = 14
+    VT_CORE_TICKS = 14,
+    VT_OCCUPIED_CHIP_COUNT = 16
   };
   uint32_t thread_id() const {
     return GetField<uint32_t>(VT_THREAD_ID, 0);
@@ -1368,6 +1369,12 @@ struct ThreadIOMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   ::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>> *mutable_core_ticks() {
     return GetPointer<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>> *>(VT_CORE_TICKS);
   }
+  uint32_t occupied_chip_count() const {
+    return GetField<uint32_t>(VT_OCCUPIED_CHIP_COUNT, 0);
+  }
+  bool mutate_occupied_chip_count(uint32_t _occupied_chip_count = 0) {
+    return SetField<uint32_t>(VT_OCCUPIED_CHIP_COUNT, _occupied_chip_count, 0);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1383,6 +1390,7 @@ struct ThreadIOMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_CORE_TICKS) &&
            verifier.VerifyVector(core_ticks()) &&
            verifier.VerifyVectorOfTables(core_ticks()) &&
+           VerifyField<uint32_t>(verifier, VT_OCCUPIED_CHIP_COUNT, 4) &&
            verifier.EndTable();
   }
 };
@@ -1409,6 +1417,9 @@ struct ThreadIOMappingBuilder {
   void add_core_ticks(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>>> core_ticks) {
     fbb_.AddOffset(ThreadIOMapping::VT_CORE_TICKS, core_ticks);
   }
+  void add_occupied_chip_count(uint32_t occupied_chip_count) {
+    fbb_.AddElement<uint32_t>(ThreadIOMapping::VT_OCCUPIED_CHIP_COUNT, occupied_chip_count, 0);
+  }
   explicit ThreadIOMappingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1427,8 +1438,10 @@ inline ::flatbuffers::Offset<ThreadIOMapping> CreateThreadIOMapping(
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeParams> runtime = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputTensorMappings> input_mappings = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputTensorMappings> output_mappings = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>>> core_ticks = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>>> core_ticks = 0,
+    uint32_t occupied_chip_count = 0) {
   ThreadIOMappingBuilder builder_(_fbb);
+  builder_.add_occupied_chip_count(occupied_chip_count);
   builder_.add_core_ticks(core_ticks);
   builder_.add_output_mappings(output_mappings);
   builder_.add_input_mappings(input_mappings);
@@ -1445,7 +1458,8 @@ inline ::flatbuffers::Offset<ThreadIOMapping> CreateThreadIOMappingDirect(
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::RuntimeParams> runtime = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::InputTensorMappings> input_mappings = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::OutputTensorMappings> output_mappings = 0,
-    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>> *core_ticks = nullptr) {
+    const std::vector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>> *core_ticks = nullptr,
+    uint32_t occupied_chip_count = 0) {
   auto core_ticks__ = core_ticks ? _fbb.CreateVector<::flatbuffers::Offset<paibox::backendv2::generated::fbs::CoreTick>>(*core_ticks) : 0;
   return paibox::backendv2::generated::fbs::CreateThreadIOMapping(
       _fbb,
@@ -1454,7 +1468,8 @@ inline ::flatbuffers::Offset<ThreadIOMapping> CreateThreadIOMappingDirect(
       runtime,
       input_mappings,
       output_mappings,
-      core_ticks__);
+      core_ticks__,
+      occupied_chip_count);
 }
 
 struct IOMapping FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -1597,7 +1612,8 @@ struct CompileArtifacts FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SCHEMA_VERSION = 4,
     VT_IO_MAPPING = 6,
-    VT_CONFIG_FRAMES = 8
+    VT_CONFIG_FRAMES = 8,
+    VT_TARGET_BOARD = 10
   };
   uint32_t schema_version() const {
     return GetField<uint32_t>(VT_SCHEMA_VERSION, 0);
@@ -1617,6 +1633,12 @@ struct CompileArtifacts FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   paibox::backendv2::generated::fbs::ConfigFrames *mutable_config_frames() {
     return GetPointer<paibox::backendv2::generated::fbs::ConfigFrames *>(VT_CONFIG_FRAMES);
   }
+  const ::flatbuffers::String *target_board() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_TARGET_BOARD);
+  }
+  ::flatbuffers::String *mutable_target_board() {
+    return GetPointer<::flatbuffers::String *>(VT_TARGET_BOARD);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1625,6 +1647,8 @@ struct CompileArtifacts FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(io_mapping()) &&
            VerifyOffset(verifier, VT_CONFIG_FRAMES) &&
            verifier.VerifyTable(config_frames()) &&
+           VerifyOffset(verifier, VT_TARGET_BOARD) &&
+           verifier.VerifyString(target_board()) &&
            verifier.EndTable();
   }
 };
@@ -1642,6 +1666,9 @@ struct CompileArtifactsBuilder {
   void add_config_frames(::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames) {
     fbb_.AddOffset(CompileArtifacts::VT_CONFIG_FRAMES, config_frames);
   }
+  void add_target_board(::flatbuffers::Offset<::flatbuffers::String> target_board) {
+    fbb_.AddOffset(CompileArtifacts::VT_TARGET_BOARD, target_board);
+  }
   explicit CompileArtifactsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1657,12 +1684,29 @@ inline ::flatbuffers::Offset<CompileArtifacts> CreateCompileArtifacts(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t schema_version = 0,
     ::flatbuffers::Offset<paibox::backendv2::generated::fbs::IOMapping> io_mapping = 0,
-    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames = 0) {
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> target_board = 0) {
   CompileArtifactsBuilder builder_(_fbb);
+  builder_.add_target_board(target_board);
   builder_.add_config_frames(config_frames);
   builder_.add_io_mapping(io_mapping);
   builder_.add_schema_version(schema_version);
   return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<CompileArtifacts> CreateCompileArtifactsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t schema_version = 0,
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::IOMapping> io_mapping = 0,
+    ::flatbuffers::Offset<paibox::backendv2::generated::fbs::ConfigFrames> config_frames = 0,
+    const char *target_board = nullptr) {
+  auto target_board__ = target_board ? _fbb.CreateString(target_board) : 0;
+  return paibox::backendv2::generated::fbs::CreateCompileArtifacts(
+      _fbb,
+      schema_version,
+      io_mapping,
+      config_frames,
+      target_board__);
 }
 
 inline const ::flatbuffers::TypeTable *DataTypeTypeTable() {
@@ -2008,7 +2052,8 @@ inline const ::flatbuffers::TypeTable *ThreadIOMappingTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 1 },
     { ::flatbuffers::ET_SEQUENCE, 0, 2 },
     { ::flatbuffers::ET_SEQUENCE, 0, 3 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 4 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 4 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     paibox::backendv2::generated::fbs::CoreOffsetTypeTable,
@@ -2023,10 +2068,11 @@ inline const ::flatbuffers::TypeTable *ThreadIOMappingTypeTable() {
     "runtime",
     "input_mappings",
     "output_mappings",
-    "core_ticks"
+    "core_ticks",
+    "occupied_chip_count"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 7, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -2069,7 +2115,8 @@ inline const ::flatbuffers::TypeTable *CompileArtifactsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 1 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 1 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     paibox::backendv2::generated::fbs::IOMappingTypeTable,
@@ -2078,10 +2125,11 @@ inline const ::flatbuffers::TypeTable *CompileArtifactsTypeTable() {
   static const char * const names[] = {
     "schema_version",
     "io_mapping",
-    "config_frames"
+    "config_frames",
+    "target_board"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
