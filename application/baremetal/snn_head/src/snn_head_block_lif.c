@@ -66,7 +66,7 @@ bool snn_head_run_block_lif(const float *ln_weight, const float *ln_bias,
         return false;
     }
 
-    const rvrt_paicore_runner_deploy_config_t runner_config = {
+    const snn_head_runtime_layer_config_t runner_config = {
         .artifact_data = artifact_start,
         .artifact_size = snn_head_artifact_size(artifact_size_symbol),
         .frame_buffer = layer_frame_buf,

@@ -176,7 +176,7 @@ static bool arm_layer(const uint8_t *art_start, unsigned art_size,
     }
     g_echo.elems = count;
     g_echo.is_voltage = is_voltage;
-    rvrt_artifact_t artifact = {0};
+    rvrt_artifact_view_t artifact = {0};
     rvrt_artifact_output_mapping_view_t output_view = {0};
     rvrt_artifact_runtime_t runtime = {0};
     if ((rvrt_artifact_read(art_start, art_size, &artifact) !=

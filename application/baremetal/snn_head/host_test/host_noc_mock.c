@@ -6,7 +6,7 @@
  * buffer（layer_frame_buf / tensor_workspace）的读写是否越界、覆盖、未对齐。
  * 本 mock 不校验数值，只负责把帧按协议投递给 ISR。
  *
- * 驱动原理（见 Lib/runtime/session.c）：
+ * 驱动原理（见 Lib/runtime/transport.c）：
  *   - reset 和每个 sample 分段都使用独立的 control barrier；输入/config
  *     使用 unlocked 写。
  *   - 生成器只响应 Type-C/Type-D control；输入/config 帧不会产生 RX。

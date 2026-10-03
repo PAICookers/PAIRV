@@ -95,7 +95,7 @@ snn_head_test_check_contract(const uint8_t *data, size_t size,
                              const snn_head_layer_contract_t *c,
                              rvrt_artifact_input_mapping_view_t *input_view_out)
 {
-    rvrt_artifact_t artifact = {0};
+    rvrt_artifact_view_t artifact = {0};
     rvrt_artifact_runtime_t runtime = {0};
     rvrt_artifact_input_mapping_view_t input_view = {0};
     rvrt_artifact_output_mapping_view_t output_view = {0};
