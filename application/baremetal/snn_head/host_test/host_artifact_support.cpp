@@ -2,12 +2,14 @@
  * host_artifact_support.cpp —— choreography 测试的 C++ 辅助能力，只在 host 用：
  *
  *  host_enum_output_axons():
- *     枚举某层 output mapping 的 (elem_idx -> axon_bit_idx)。哨兵回显需要据此构造能被
- *     decode 命中的输出帧：DATA 用 axon_bit_idx 直接命中元素；VOLTAGE 的 axon_bit_idx
- *     即该元素 lane-0 的 base，四个 lane 为 base + lane*8。
+ *     枚举某层 output mapping 的 (elem_idx ->
+ * axon_bit_idx)。哨兵回显需要据此构造能被 decode 命中的输出帧：DATA 用
+ * axon_bit_idx 直接命中元素；VOLTAGE 的 axon_bit_idx 即该元素 lane-0 的
+ * base，四个 lane 为 base + lane*8。
  *
  * 复用 artifact_reader 的导航路径（见 Lib/runtime/artifact_reader.cpp）：
- *   artifact.io_mapping -> threads()[i] -> runtime() / output_mappings()->items()[0]->entries()
+ *   artifact.io_mapping -> threads()[i] -> runtime() /
+ * output_mappings()->items()[0]->entries()
  */
 #include "artifact_reader.h"
 #include "generated/compile_artifacts_generated.h"
@@ -25,7 +27,7 @@ extern "C" int host_enum_output_axons(const uint8_t *buf, unsigned size,
     }
     *out_count = 0U;
 
-    rvrt_artifact_t artifact;
+    rvrt_artifact_view_t artifact;
     if (rvrt_artifact_read(buf, size, &artifact) != RVRT_ARTIFACT_OK) {
         return 2;
     }

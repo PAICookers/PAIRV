@@ -1,18 +1,11 @@
 /*
- * run_layers_host.c —— host（x86）编解码 buffer 压测 driver（方案C）。
+ * run_layers_host.c - host coverage for the production RuntimeSession /
+ * ThreadRunner path across the SNN Head layer artifacts.
  *
- * 本 driver 使用层的真实共享 buffer（layer_frame_buf /
- * tensor_workspace）和真实的 input_view/output_view，单独压测 L0 编解码调用：
- *
- *   send_input_timestep  -> 真实把 int8 输入按 input_view 编码进
- * layer_frame_buf sync_wait_payload    -> mock 把 work×N + complete 帧灌进
- * RX(layer_frame_buf) decode_output_frames -> DATA 层：批量解码写回
- * tensor_workspace 当前行(1536B) decode_voltage_frame -> VOLTAGE
- * 层(fc2)：逐帧拼 int32 写回当前行(6144B)
- *
- * 整个可执行文件用 -fsanitize=address,undefined 编译，只要编解码对这些共享
- * buffer 出现越界/覆盖/未对齐，ASan/UBSan
- * 会在运行时立刻中止并打印精确位置。不校验数值。
+ * The mock supplies deterministic DATA or VOLTAGE frames for each completion
+ * barrier. This exercises the real input encoder, per-timestep runner schedule,
+ * output decoder, and caller-owned buffers under ASan/UBSan; it is not a
+ * PAICORE numerical or NoC simulation.
  */
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,27 +14,109 @@
 #include <string.h>
 
 #include "debug.h"
-#include "session_io.h"
-#include "snn_head_golden.h"
 #include "snn_head_internal.h"
 
 int snn_head_host_load_artifacts(const char *asset_dir);
-void host_mock_set_rx_frames(const rvrt_frame_t *frames, uint32_t count);
+int host_enum_output_axons(const uint8_t *buf, unsigned size,
+                           uint32_t *elem_to_axon, uint32_t max_elems,
+                           uint32_t *out_count);
+typedef uint32_t (*host_mock_gen_fn)(void *ctx, uint32_t control_high,
+                                     uint32_t control_low, rvrt_frame_t *out,
+                                     uint32_t cap);
+void host_mock_set_generator(host_mock_gen_fn fn, void *ctx);
 
 #ifndef SNN_HEAD_ASSET_DIR
 #define SNN_HEAD_ASSET_DIR "assets"
 #endif
 
-/* 帧 high 位型（见 frame_codec.h）：WORK 类型在 bit[31:30]=2；DATA/VOLTAGE
- * 子型在 bit29；COMPLETE 在 bit[31:28]=0xE。 */
-#define HOST_WORK_DATA_HIGH 0x80000000U    /* type=WORK, kind=DATA */
-#define HOST_WORK_VOLTAGE_HIGH 0xA0000000U /* type=WORK, kind=VOLTAGE */
+#define HOST_WORK_DATA_HIGH 0x80000000U
+#define HOST_WORK_VOLTAGE_HIGH 0xA0000000U
 #define HOST_COMPLETE_HIGH 0xE0000000U
+#define HOST_MOCK_GEN_CAP ((SNN_HEAD_TIMESTEPS * SNN_HEAD_HIDDEN_DIM * 4U) + 1U)
 
-/* driver 拥有的注入帧缓冲（与 layer_frame_buf 分离，避免别名）。 */
-static rvrt_frame_t g_inject[SNN_HEAD_FRAME_BUF_FRAMES];
+typedef struct host_layer_generator_s {
+    uint32_t elem_to_axon[SNN_HEAD_HIDDEN_DIM];
+    uint32_t elements;
+    uint32_t timesteps;
+    uint32_t completion_target;
+    uint32_t current_target;
+    uint32_t next_timestep;
+    uint32_t output_target_lcn;
+    bool is_voltage;
+} host_layer_generator_t;
 
-/* 把 runtime 内部的 RV_DEBUG_LOGE/W/I 直接转到 stderr，便于定位失败步骤。 */
+static uint8_t g_input[SNN_HEAD_TIMESTEPS * SNN_HEAD_HIDDEN_DIM];
+
+static inline rvrt_frame_t make_work(uint32_t high, uint32_t axon,
+                                     uint32_t timestamp, uint8_t payload)
+{
+    return (rvrt_frame_t){
+        high | (((timestamp >> 7U) & 0x1U) << 28U),
+        ((timestamp & 0x7FU) << 17U) | (axon << 8U) | (uint32_t)payload,
+    };
+}
+
+static uint32_t generate_layer_frames(void *user_data, uint32_t control_high,
+                                      uint32_t control_low, rvrt_frame_t *out,
+                                      uint32_t capacity)
+{
+    host_layer_generator_t *const generator =
+        (host_layer_generator_t *)user_data;
+    uint32_t count = 0U;
+    if ((generator == NULL) || (out == NULL) || (capacity == 0U)) {
+        return 0U;
+    }
+    if ((control_high >> 28U) == 0xDU) {
+        generator->current_target = 0U;
+        generator->next_timestep = 0U;
+        out[count++] = make_work(HOST_COMPLETE_HIGH, 0U, 0U, 0U);
+        return count;
+    }
+    if ((control_high >> 28U) != 0xCU) {
+        return 0U;
+    }
+
+    const uint32_t delta = control_low & 0xFFFFFFU;
+    if ((delta == 0U) || (delta > generator->completion_target) ||
+        (generator->current_target > generator->completion_target - delta)) {
+        return 0U;
+    }
+    const uint32_t target = generator->current_target + delta;
+    for (uint32_t timestep = generator->next_timestep;
+         (timestep < target) && (timestep < generator->timesteps); ++timestep) {
+        const uint32_t timestamp = timestep << generator->output_target_lcn;
+        if (!generator->is_voltage) {
+            for (uint32_t element = 0U;
+                 (element < generator->elements) && (count + 1U < capacity);
+                 ++element) {
+                if ((element % generator->timesteps) == timestep) {
+                    out[count++] = make_work(HOST_WORK_DATA_HIGH,
+                                             generator->elem_to_axon[element],
+                                             timestamp, 1U);
+                }
+            }
+        } else {
+            const uint32_t value = (timestep + 1U) * 1000U;
+            for (uint32_t element = 0U; element < generator->elements;
+                 ++element) {
+                const uint32_t base = generator->elem_to_axon[element];
+                for (uint32_t lane = 0U; (lane < 4U) && (count + 1U < capacity);
+                     ++lane) {
+                    out[count++] =
+                        make_work(HOST_WORK_VOLTAGE_HIGH, base + lane * 8U,
+                                  timestamp, (uint8_t)(value >> (lane * 8U)));
+                }
+            }
+        }
+    }
+    generator->next_timestep = target;
+    generator->current_target = target;
+    if (count < capacity) {
+        out[count++] = make_work(HOST_COMPLETE_HIGH, 0U, 0U, 0U);
+    }
+    return count;
+}
+
 static void host_debug_sink(rv_debug_level_t level, const char *title,
                             const char *function_name, const char *message,
                             void *user_data)
@@ -51,138 +126,88 @@ static void host_debug_sink(rv_debug_level_t level, const char *title,
             function_name ? function_name : "?", message ? message : "");
 }
 
-static int report(const char *name, bool ok)
+static int report(const char *name, rvrt_runtime_status_t status)
 {
+    const bool ok = status == RVRT_RUNTIME_OK;
     printf("%-8s : %s\n", name, ok ? "OK" : "RUN FAILED");
     return ok ? 0 : 1;
 }
 
-static int report_session(const char *name, bool ok, rvrt_session_t *session)
+static int run_layer(const char *name, const uint8_t *artifact_data,
+                     const uint8_t *artifact_size_symbol, bool is_voltage)
 {
-    return report(name,
-                  ok && (rvrt_session_deinit(session) == RVRT_SESSION_OK));
-}
-
-/* 预置本轮 sync_wait 要投递的 RX 帧：work_frames 个 work 帧（地址取
- * 0..N-1，部分会 命中 output_view 真正写入，其余安全跳过）+ 末尾 1 个
- * complete。填到接近 RX 容量， 压测 ISR 追加与解码遍历。 */
-static void arm_injection(bool is_voltage, uint32_t work_frames)
-{
-    const uint32_t high =
-        is_voltage ? HOST_WORK_VOLTAGE_HIGH : HOST_WORK_DATA_HIGH;
-    uint32_t n = 0U;
-    for (uint32_t i = 0U;
-         (i < work_frames) && (n < SNN_HEAD_FRAME_BUF_FRAMES - 1U); ++i) {
-        g_inject[n].high = high;
-        g_inject[n].low =
-            (i << 8U) | 0xA5U; /* axon_bit_idx=i, timestep=0, payload */
-        ++n;
-    }
-    g_inject[n].high = HOST_COMPLETE_HIGH;
-    g_inject[n].low = 0U;
-    ++n;
-    host_mock_set_rx_frames(g_inject, n);
-}
-
-/*
- * 对一层做 L0 编解码压测：建立 session -> load_config -> reset -> 8 轮
- * (send -> raw-payload sync -> decode)。此测试不模拟 runner 的样本调度。
- */
-static int stress_codec(const char *name, const uint8_t *art_start,
-                        const uint8_t *art_size, uint32_t input_elems,
-                        bool is_voltage)
-{
-    snn_head_layer_artifact_context_t ctx = {0};
-    if (!snn_head_read_layer_artifact(art_start, art_size, &ctx)) {
-        return report(name, false);
+    const size_t artifact_size = snn_head_artifact_size(artifact_size_symbol);
+    snn_head_layer_artifact_context_t context = {0};
+    if (!snn_head_read_layer_artifact(artifact_data, artifact_size_symbol,
+                                      &context)) {
+        return report(name, RVRT_RUNTIME_RUNTIME_ERROR);
     }
 
-    rvrt_session_t session = {0};
-    const rvrt_session_config_t cfg = {
-        .artifact = &ctx.artifact,
+    host_layer_generator_t generator = {
+        .elements = context.output_view.element_count,
+        .timesteps = context.runtime.timesteps,
+        .completion_target = context.runtime.completion_sync_timestep,
+        .output_target_lcn = context.output_view.target_lcn,
+        .is_voltage = is_voltage,
+    };
+    uint32_t mapped_elements = 0U;
+    if ((host_enum_output_axons(artifact_data, (unsigned)artifact_size,
+                                generator.elem_to_axon, SNN_HEAD_HIDDEN_DIM,
+                                &mapped_elements) != 0) ||
+        (mapped_elements != generator.elements)) {
+        return report(name, RVRT_RUNTIME_RUNTIME_ERROR);
+    }
+    host_mock_set_generator(generate_layer_frames, &generator);
+
+    rvrt_runtime_session_t session = {0};
+    const rvrt_runtime_session_open_config_t session_config = {
+        .artifact_data = artifact_data,
+        .artifact_size = artifact_size,
+        .frame_buffer = layer_frame_buf,
+        .frame_capacity = SNN_HEAD_FRAME_BUF_FRAMES,
+    };
+    rvrt_runtime_status_t status =
+        rvrt_runtime_session_open(&session, &session_config);
+    if (status == RVRT_RUNTIME_OK) {
+        status = rvrt_runtime_session_configure(&session);
+    }
+
+    rvrt_thread_runner_t runner = {0};
+    const rvrt_thread_runner_open_config_t runner_config = {
+        .session = &session,
         .thread_index = 0U,
-        .rx_frames = layer_frame_buf,
-        .rx_capacity = SNN_HEAD_FRAME_BUF_FRAMES,
+        .input_mapping_index = 0U,
+        .output_mapping_index = 0U,
+        .voltage_state = &fc2_voltage_state[0][0],
+        .voltage_state_capacity = SNN_HEAD_TIMESTEPS * SNN_HEAD_HIDDEN_DIM,
+        .timeout_ms = SNN_HEAD_TIMEOUT_MS,
     };
-    if (rvrt_session_init(&session, &cfg) != RVRT_SESSION_OK) {
-        return report(name, false);
-    }
-    if (rvrt_session_load_config(&session) != RVRT_SESSION_OK) {
-        return report_session(name, false, &session);
-    }
-    if (rvrt_session_reset_model(&session, SNN_HEAD_TIMEOUT_MS) !=
-        RVRT_SESSION_OK) {
-        return report_session(name, false, &session);
+    if (status == RVRT_RUNTIME_OK) {
+        status = rvrt_thread_runner_open(&runner, &runner_config);
     }
 
-    /* 该低层 codec 压测每轮只提供一行输出，单步 view 使批量 decoder 的 required
-     * 等于 element_count，与单行 buffer 尺寸一致。一个逻辑 timestep 的
-     * control completion 为 1；输出 mapping 的地址残量不参与该 target。 */
-    const rvrt_artifact_runtime_t rt1 = {
-        .timesteps = 1U,
-        .pipeline_latency = 1U,
-        .completion_sync_timestep = 1U,
-        .output_time_encoding = RVRT_OUTPUT_TIME_ENCODING_STREAM,
-    };
-
-    /* 每行输出字节数：DATA=1536（uint8 spike），VOLTAGE=6144（int32 膜电位）。
-     */
-    const uint32_t row_bytes =
-        is_voltage ? SNN_HEAD_VOLTAGE_STRIDE_BYTES : SNN_HEAD_HIDDEN_DIM;
-    /* 注入 work 帧数：DATA 一行最坏 1536；VOLTAGE 每元素 4 lane = 6144。 */
-    const uint32_t work_frames =
-        is_voltage ? (SNN_HEAD_HIDDEN_DIM * 4U) : SNN_HEAD_HIDDEN_DIM;
-
-    for (uint32_t t = 0U; t < SNN_HEAD_TIMESTEPS; ++t) {
-        uint8_t *const row = &tensor_workspace[t * row_bytes];
-
-        /* 编码：真实把当前行 int8 输入按 input_view 编码进 layer_frame_buf。 */
-        if (rvrt_session_send_input_timestep(
-                &session, &ctx.input_view, 0U, row, input_elems,
-                layer_frame_buf,
-                (uint32_t)(sizeof(layer_frame_buf) /
-                           sizeof(layer_frame_buf[0]))) != RVRT_SESSION_OK) {
-            return report_session(name, false, &session);
-        }
-
-        /* 预置本轮 RX 帧，随后 sync_wait 的 active RX barrier 会把它们灌进 RX
-         * buffer。
-         */
-        arm_injection(is_voltage, work_frames);
-
-        const rvrt_frame_t *frames = NULL;
-        uint32_t count = 0U;
-        if (rvrt_session_sync_wait_payload(
-                &session, ctx.runtime.pipeline_latency, SNN_HEAD_TIMEOUT_MS,
-                &frames, &count) != RVRT_SESSION_OK) {
-            return report_session(name, false, &session);
-        }
-
-        if (is_voltage) {
-            /* VOLTAGE：逐帧拼 int32 写回本行（先清零本行与 lane 拼接状态）。 */
-            int32_t *const vrow = (int32_t *)row;
-            memset(vrow, 0, SNN_HEAD_VOLTAGE_STRIDE_BYTES);
-            memset(fc2_voltage_state, 0, sizeof(fc2_voltage_state));
-            for (uint32_t i = 0U; i < count; ++i) {
-                bool written = false;
-                if (rvrt_decode_voltage_frame(
-                        &ctx.output_view, &frames[i], vrow, SNN_HEAD_HIDDEN_DIM,
-                        &fc2_voltage_state[0][0], SNN_HEAD_HIDDEN_DIM,
-                        &written) != RVRT_CODEC_STATUS_OK) {
-                    return report_session(name, false, &session);
-                }
-            }
-        } else {
-            /* DATA：批量解码写回本行（decode 内部先按 required
-             * 清零再写命中元素）。 */
-            if (rvrt_decode_output_frames(&ctx.output_view, &rt1, frames, count,
-                                          row, SNN_HEAD_HIDDEN_DIM) !=
-                RVRT_CODEC_STATUS_OK) {
-                return report_session(name, false, &session);
-            }
+    memset(g_input, 0x5A, sizeof(g_input));
+    if (status == RVRT_RUNTIME_OK) {
+        status = rvrt_thread_runner_run_sample(
+            &runner, g_input, sizeof(g_input), 0U, tensor_workspace,
+            sizeof(tensor_workspace), 0U);
+    }
+    if (runner.opened) {
+        const rvrt_runtime_status_t close_status =
+            rvrt_thread_runner_close(&runner);
+        if (status == RVRT_RUNTIME_OK) {
+            status = close_status;
         }
     }
-    return report_session(name, true, &session);
+    if (session.opened) {
+        const rvrt_runtime_status_t close_status =
+            rvrt_runtime_session_close(&session);
+        if (status == RVRT_RUNTIME_OK) {
+            status = close_status;
+        }
+    }
+    host_mock_set_generator(NULL, NULL);
+    return report(name, status);
 }
 
 int main(void)
@@ -194,25 +219,18 @@ int main(void)
                 SNN_HEAD_ASSET_DIR);
         return 2;
     }
-    printf("== snn_head host codec buffer stress (ASan/UBSan) ==\n");
-    printf("golden_ready=%d\n", snn_head_golden_ready);
+    printf(
+        "== snn_head host RuntimeSession/ThreadRunner test (ASan/UBSan) ==\n");
 
-    int fail = 0;
-    /* fc1_lif：输入 int8[768]，输出 DATA/spike[1536]。 */
-    fail |=
-        stress_codec("fc1_lif", snn_head_fc1_lif_artifact_start,
-                     snn_head_fc1_lif_artifact_size, SNN_HEAD_INPUT_DIM, false);
-    /* block0/block1：输入 int8[1536]，输出 DATA/spike[1536]。 */
-    fail |= stress_codec("block0", snn_head_block0_lif_artifact_start,
-                         snn_head_block0_lif_artifact_size, SNN_HEAD_HIDDEN_DIM,
-                         false);
-    fail |= stress_codec("block1", snn_head_block1_lif_artifact_start,
-                         snn_head_block1_lif_artifact_size, SNN_HEAD_HIDDEN_DIM,
-                         false);
-    /* fc2：输入 int8[1536]，输出 VOLTAGE/int32[1536]。 */
-    fail |= stress_codec("fc2", snn_head_fc2_artifact_start,
-                         snn_head_fc2_artifact_size, SNN_HEAD_HIDDEN_DIM, true);
-
-    printf("\nHOST CODEC STRESS: %s\n", fail ? "FAIL" : "PASS");
-    return fail ? 1 : 0;
+    int failures = 0;
+    failures |= run_layer("fc1_lif", snn_head_fc1_lif_artifact_start,
+                          snn_head_fc1_lif_artifact_size, false);
+    failures |= run_layer("block0", snn_head_block0_lif_artifact_start,
+                          snn_head_block0_lif_artifact_size, false);
+    failures |= run_layer("block1", snn_head_block1_lif_artifact_start,
+                          snn_head_block1_lif_artifact_size, false);
+    failures |= run_layer("fc2", snn_head_fc2_artifact_start,
+                          snn_head_fc2_artifact_size, true);
+    printf("\nHOST RUNTIME LAYERS: %s\n", failures ? "FAIL" : "PASS");
+    return failures ? 1 : 0;
 }

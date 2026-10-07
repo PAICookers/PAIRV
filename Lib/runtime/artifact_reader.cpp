@@ -13,7 +13,8 @@ constexpr uint32_t kSupportedSchemaVersion = 1U;
 constexpr uint32_t kControlPayloadMax = 0xFFFFFFU;
 constexpr uint32_t kTargetLcnMax = 7U;
 
-const fbs::CompileArtifacts *root_from_artifact(const rvrt_artifact_t *artifact)
+const fbs::CompileArtifacts *
+root_from_artifact(const rvrt_artifact_view_t *artifact)
 {
     if ((artifact == nullptr) || (artifact->root == nullptr)) {
         return nullptr;
@@ -21,7 +22,7 @@ const fbs::CompileArtifacts *root_from_artifact(const rvrt_artifact_t *artifact)
     return static_cast<const fbs::CompileArtifacts *>(artifact->root);
 }
 
-rvrt_artifact_status_t config_frames(const rvrt_artifact_t *artifact,
+rvrt_artifact_status_t config_frames(const rvrt_artifact_view_t *artifact,
                                      const fbs::ConfigFrames **frames)
 {
     if ((artifact == nullptr) || (frames == nullptr)) {
@@ -38,7 +39,7 @@ rvrt_artifact_status_t config_frames(const rvrt_artifact_t *artifact,
     return RVRT_ARTIFACT_OK;
 }
 
-rvrt_artifact_status_t config_words(const rvrt_artifact_t *artifact,
+rvrt_artifact_status_t config_words(const rvrt_artifact_view_t *artifact,
                                     const flatbuffers::Vector<uint32_t> **words)
 {
     const fbs::ConfigFrames *config = nullptr;
@@ -56,7 +57,7 @@ rvrt_artifact_status_t config_words(const rvrt_artifact_t *artifact,
     return RVRT_ARTIFACT_OK;
 }
 
-rvrt_artifact_status_t thread_at(const rvrt_artifact_t *artifact,
+rvrt_artifact_status_t thread_at(const rvrt_artifact_view_t *artifact,
                                  uint32_t thread_index,
                                  const fbs::ThreadIOMapping **thread)
 {
@@ -88,7 +89,7 @@ rvrt_artifact_status_t thread_at(const rvrt_artifact_t *artifact,
     return RVRT_ARTIFACT_OK;
 }
 
-rvrt_artifact_status_t input_at(const rvrt_artifact_t *artifact,
+rvrt_artifact_status_t input_at(const rvrt_artifact_view_t *artifact,
                                 uint32_t thread_index, uint32_t input_index,
                                 const fbs::InputTensorMapping **input)
 {
@@ -121,7 +122,7 @@ rvrt_artifact_status_t input_at(const rvrt_artifact_t *artifact,
     return RVRT_ARTIFACT_OK;
 }
 
-rvrt_artifact_status_t output_at(const rvrt_artifact_t *artifact,
+rvrt_artifact_status_t output_at(const rvrt_artifact_view_t *artifact,
                                  uint32_t thread_index, uint32_t output_index,
                                  const fbs::OutputTensorMapping **output)
 {
@@ -384,7 +385,7 @@ bool is_aligned(const void *data)
 } // namespace
 
 rvrt_artifact_status_t rvrt_artifact_read(const uint8_t *data, size_t size,
-                                          rvrt_artifact_t *artifact)
+                                          rvrt_artifact_view_t *artifact)
 {
     if ((data == nullptr) || (artifact == nullptr)) {
         return RVRT_ARTIFACT_NULL_ARGUMENT;
@@ -438,8 +439,9 @@ rvrt_artifact_status_t rvrt_artifact_read(const uint8_t *data, size_t size,
     return RVRT_ARTIFACT_OK;
 }
 
-rvrt_artifact_status_t rvrt_artifact_get_info(const rvrt_artifact_t *artifact,
-                                              rvrt_artifact_info_t *info)
+rvrt_artifact_status_t
+rvrt_artifact_get_info(const rvrt_artifact_view_t *artifact,
+                       rvrt_artifact_info_t *info)
 {
     if (info == nullptr) {
         return RVRT_ARTIFACT_NULL_ARGUMENT;
@@ -468,7 +470,7 @@ rvrt_artifact_status_t rvrt_artifact_get_info(const rvrt_artifact_t *artifact,
 }
 
 rvrt_artifact_status_t
-rvrt_artifact_config_word_count(const rvrt_artifact_t *artifact,
+rvrt_artifact_config_word_count(const rvrt_artifact_view_t *artifact,
                                 uint32_t *count)
 {
     if (count == nullptr) {
@@ -486,7 +488,7 @@ rvrt_artifact_config_word_count(const rvrt_artifact_t *artifact,
 }
 
 rvrt_artifact_status_t
-rvrt_artifact_config_frame_words(const rvrt_artifact_t *artifact,
+rvrt_artifact_config_frame_words(const rvrt_artifact_view_t *artifact,
                                  uint32_t frame_index, uint32_t *high,
                                  uint32_t *low)
 {
@@ -524,7 +526,8 @@ rvrt_artifact_config_frame_words(const rvrt_artifact_t *artifact,
 }
 
 rvrt_artifact_status_t
-rvrt_artifact_thread_count(const rvrt_artifact_t *artifact, uint32_t *count)
+rvrt_artifact_thread_count(const rvrt_artifact_view_t *artifact,
+                           uint32_t *count)
 {
     if (count == nullptr) {
         return RVRT_ARTIFACT_NULL_ARGUMENT;
@@ -545,7 +548,7 @@ rvrt_artifact_thread_count(const rvrt_artifact_t *artifact, uint32_t *count)
 }
 
 rvrt_artifact_status_t rvrt_artifact_thread_root_core_offset(
-    const rvrt_artifact_t *artifact, uint32_t thread_index,
+    const rvrt_artifact_view_t *artifact, uint32_t thread_index,
     rvrt_artifact_core_offset_t *root_core_offset)
 {
     const fbs::ThreadIOMapping *thread = nullptr;
@@ -558,7 +561,7 @@ rvrt_artifact_status_t rvrt_artifact_thread_root_core_offset(
 }
 
 rvrt_artifact_status_t
-rvrt_artifact_thread_runtime(const rvrt_artifact_t *artifact,
+rvrt_artifact_thread_runtime(const rvrt_artifact_view_t *artifact,
                              uint32_t thread_index,
                              rvrt_artifact_runtime_t *runtime)
 {
@@ -586,7 +589,7 @@ rvrt_artifact_thread_runtime(const rvrt_artifact_t *artifact,
 }
 
 rvrt_artifact_status_t rvrt_artifact_get_input_mapping_view(
-    const rvrt_artifact_t *artifact, uint32_t thread_index,
+    const rvrt_artifact_view_t *artifact, uint32_t thread_index,
     uint32_t input_index, rvrt_artifact_input_mapping_view_t *view)
 {
     if (view == nullptr) {
@@ -618,7 +621,7 @@ rvrt_artifact_status_t rvrt_artifact_get_input_mapping_view(
 }
 
 rvrt_artifact_status_t rvrt_artifact_get_output_mapping_view(
-    const rvrt_artifact_t *artifact, uint32_t thread_index,
+    const rvrt_artifact_view_t *artifact, uint32_t thread_index,
     uint32_t output_index, rvrt_artifact_output_mapping_view_t *view)
 {
     if (view == nullptr) {

@@ -1,18 +1,19 @@
-#include "session_io.h"
+#include "transport_io_internal.h"
 
 #include "debug.h"
 
-rvrt_session_status_t rvrt_session_send_input_timestep(
-    rvrt_session_t *session, const rvrt_artifact_input_mapping_view_t *mapping,
-    uint32_t timestep, const uint8_t *input, size_t input_size,
-    rvrt_frame_t *workspace, uint32_t workspace_capacity)
+rvrt_runtime_status_t rvrt_transport_send_input_timestep(
+    rvrt_transport_t *session,
+    const rvrt_artifact_input_mapping_view_t *mapping, uint32_t timestep,
+    const uint8_t *input, size_t input_size, rvrt_frame_t *workspace,
+    uint32_t workspace_capacity)
 {
     if ((session == NULL) || (mapping == NULL) || (input == NULL) ||
         (workspace == NULL) || (workspace_capacity == 0U)) {
-        return RVRT_SESSION_RUNTIME_ERROR;
+        return RVRT_RUNTIME_RUNTIME_ERROR;
     }
     if (session->faulted) {
-        return RVRT_SESSION_FAULTED;
+        return RVRT_RUNTIME_FAULTED;
     }
 
     rvrt_input_cursor_t cursor = {0};
@@ -33,7 +34,7 @@ rvrt_session_status_t rvrt_session_send_input_timestep(
              (codec_status != RVRT_CODEC_STATUS_BUFFER_FULL)) ||
             ((codec_status == RVRT_CODEC_STATUS_BUFFER_FULL) &&
              (frame_count == 0U))) {
-            return RVRT_SESSION_RUNTIME_ERROR;
+            return RVRT_RUNTIME_RUNTIME_ERROR;
         }
 
         RV_DEBUG_LOGI("runtime", "input chunk encoded frames=%u status=%u",
@@ -41,19 +42,19 @@ rvrt_session_status_t rvrt_session_send_input_timestep(
 #if RVRT_ENABLE_STATS
         const rv_counter_t submit_start = __get_rv_cycle();
 #endif
-        const rvrt_session_status_t send_status =
-            rvrt_session_send_frames(session, workspace, frame_count);
+        const rvrt_runtime_status_t send_status =
+            rvrt_transport_send_frames(session, workspace, frame_count);
 #if RVRT_ENABLE_STATS
         session->stats.input_submit_cycles += __get_rv_cycle() - submit_start;
-        if (send_status == RVRT_SESSION_OK) {
+        if (send_status == RVRT_RUNTIME_OK) {
             session->stats.input_frames += frame_count;
         }
 #endif
-        if (send_status != RVRT_SESSION_OK) {
+        if (send_status != RVRT_RUNTIME_OK) {
             return send_status;
         }
         if (codec_status == RVRT_CODEC_STATUS_DONE) {
-            return RVRT_SESSION_OK;
+            return RVRT_RUNTIME_OK;
         }
     }
 }

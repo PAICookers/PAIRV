@@ -18,9 +18,10 @@
 #include "frame_codec.h"
 #include "nn_layernorm.h"
 #include "nn_quant.h"
-#include "paicore_runner.h"
+#include "runtime_session.h"
 #include "snn_head.h"
 #include "snn_head_profile.h"
+#include "thread_runner.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,13 +43,13 @@ extern "C" {
 
 static inline bool snn_head_runner_status_ok(const char *layer,
                                              const char *operation,
-                                             rvrt_session_status_t status)
+                                             rvrt_runtime_status_t status)
 {
-    if (status == RVRT_SESSION_OK) {
+    if (status == RVRT_RUNTIME_OK) {
         return true;
     }
     RV_DEBUG_LOGE("snn_head", "%s %s failed: %s", layer, operation,
-                  rvrt_session_status_string(status));
+                  rvrt_runtime_session_status_string(status));
     return false;
 }
 
@@ -132,7 +133,7 @@ extern rvrt_voltage_decode_state_t fc2_voltage_state[SNN_HEAD_TIMESTEPS]
  * 各字段借用 artifact backing bytes，使用期间不能释放或覆盖对应二进制。
  */
 typedef struct snn_head_layer_artifact_context_s {
-    rvrt_artifact_t artifact;        /**< 非 owning artifact 句柄。 */
+    rvrt_artifact_view_t artifact;   /**< 非 owning artifact 句柄。 */
     rvrt_artifact_runtime_t runtime; /**< timestep/pipeline latency/completion
                                         target/time encoding。 */
     rvrt_artifact_input_mapping_view_t
@@ -140,6 +141,17 @@ typedef struct snn_head_layer_artifact_context_s {
     rvrt_artifact_output_mapping_view_t
         output_view; /**< 输出 frame 到逻辑 tensor 的映射。 */
 } snn_head_layer_artifact_context_t;
+
+/** @brief New runtime resources used by one production layer invocation. */
+typedef struct snn_head_runtime_layer_config_s {
+    const uint8_t *artifact_data;
+    size_t artifact_size;
+    rvrt_frame_t *frame_buffer;
+    uint32_t frame_capacity;
+    rvrt_voltage_decode_state_t *voltage_state;
+    uint32_t voltage_state_capacity;
+    uint32_t timeout_ms;
+} snn_head_runtime_layer_config_t;
 
 /**
  * @brief 单层 artifact 必须满足的 SNN Head
@@ -241,10 +253,11 @@ bool snn_head_run_fc3(float *action);
  *
  * @return true only when deploy, sample execution, and release all succeed.
  */
-bool snn_head_run_paicore_layer(
-    const char *layer_name, const rvrt_paicore_runner_deploy_config_t *config,
-    const uint8_t *input, size_t input_capacity, size_t input_stride,
-    void *output, size_t output_capacity, size_t output_stride);
+bool snn_head_run_paicore_layer(const char *layer_name,
+                                const snn_head_runtime_layer_config_t *config,
+                                const uint8_t *input, size_t input_capacity,
+                                size_t input_stride, void *output,
+                                size_t output_capacity, size_t output_stride);
 
 #ifdef __cplusplus
 }

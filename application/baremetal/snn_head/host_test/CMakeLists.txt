@@ -12,6 +12,7 @@ add_executable(snn_head_host_layer_test
   run_layers_host.c
   host_noc_mock.c
   host_artifact_shim.c
+  host_artifact_support.cpp
   # 被测：五层实现 + 核心（共享 buffer/helper）+ 参数
   "${SNN_HEAD_SRC_DIR}/snn_head.c"
   "${SNN_HEAD_SRC_DIR}/snn_head_profile.c"
@@ -28,9 +29,10 @@ add_executable(snn_head_host_layer_test
   # runtime 栈
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
-  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
-  "${REPO_ROOT}/Lib/runtime/session.c"
-  "${REPO_ROOT}/Lib/runtime/session_io.c"
+  "${REPO_ROOT}/Lib/runtime/runtime_session.c"
+  "${REPO_ROOT}/Lib/runtime/transport.c"
+  "${REPO_ROOT}/Lib/runtime/transport_io.c"
+  "${REPO_ROOT}/Lib/runtime/thread_runner.c"
 )
 
 target_compile_features(snn_head_host_layer_test PRIVATE c_std_17 cxx_std_17)
@@ -118,9 +120,10 @@ add_executable(snn_head_host_choreo_test
   "${REPO_ROOT}/Lib/debug.c"
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
-  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
-  "${REPO_ROOT}/Lib/runtime/session.c"
-  "${REPO_ROOT}/Lib/runtime/session_io.c"
+  "${REPO_ROOT}/Lib/runtime/runtime_session.c"
+  "${REPO_ROOT}/Lib/runtime/transport.c"
+  "${REPO_ROOT}/Lib/runtime/transport_io.c"
+  "${REPO_ROOT}/Lib/runtime/thread_runner.c"
 )
 
 target_compile_features(snn_head_host_choreo_test PRIVATE c_std_17 cxx_std_17)
@@ -172,9 +175,10 @@ add_executable(snn_head_host_uart_test
   "${REPO_ROOT}/Lib/debug.c"
   "${REPO_ROOT}/Lib/runtime/artifact_reader.cpp"
   "${REPO_ROOT}/Lib/runtime/frame_codec.c"
-  "${REPO_ROOT}/Lib/runtime/paicore_runner.c"
-  "${REPO_ROOT}/Lib/runtime/session.c"
-  "${REPO_ROOT}/Lib/runtime/session_io.c"
+  "${REPO_ROOT}/Lib/runtime/runtime_session.c"
+  "${REPO_ROOT}/Lib/runtime/transport.c"
+  "${REPO_ROOT}/Lib/runtime/transport_io.c"
+  "${REPO_ROOT}/Lib/runtime/thread_runner.c"
 )
 
 target_compile_features(snn_head_host_uart_test PRIVATE c_std_17 cxx_std_17)

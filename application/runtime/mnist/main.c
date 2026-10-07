@@ -4,9 +4,8 @@
 #include "artifact_reader.h"
 #include "data.h"
 #include "debug.h"
-#include "frame_codec.h"
-#include "session.h"
-#include "session_io.h"
+#include "runtime_session.h"
+#include "thread_runner.h"
 
 extern const uint8_t _binary_generated_compile_artifacts_bin_start[];
 /* This absolute linker symbol's address is the embedded binary's byte count. */
@@ -27,7 +26,6 @@ extern const uint8_t _binary_generated_compile_artifacts_bin_size[];
 #endif
 
 static rvrt_frame_t g_rx_frames[RVRT_APP_RX_FRAMES];
-static rvrt_frame_t g_workspace[32U];
 static uint8_t g_input[APP_TIMESTEPS * APP_INPUT_BYTES];
 
 static size_t binary_size(const uint8_t *size_symbol)
@@ -42,17 +40,10 @@ static int fail_artifact(const char *stage, rvrt_artifact_status_t status)
     return 1;
 }
 
-static int fail_codec(const char *stage, rvrt_codec_status_t status)
-{
-    printf("%s: %s failed: %s\r\n", APP_TITLE, stage,
-           rvrt_codec_status_string(status));
-    return 1;
-}
-
-static int fail_session(const char *stage, rvrt_session_status_t status)
+static int fail_runtime(const char *stage, rvrt_runtime_status_t status)
 {
     printf("%s: session %s failed: %s\r\n", APP_TITLE, stage,
-           rvrt_session_status_string(status));
+           rvrt_runtime_session_status_string(status));
     return 1;
 }
 
@@ -60,20 +51,23 @@ int main(void)
 {
     rv_debug_set_level(RV_DEBUG_ERROR);
 
+    int result = 0;
+    rvrt_runtime_session_t session = {0};
+    rvrt_thread_runner_t runner = {0};
+
     /* _start is flash data; _size's address converts to its byte count. */
     const uint8_t *const artifact_data =
         _binary_generated_compile_artifacts_bin_start;
     const size_t artifact_size =
         binary_size(_binary_generated_compile_artifacts_bin_size);
-    const uint32_t workspace_capacity =
-        (uint32_t)(sizeof(g_workspace) / sizeof(g_workspace[0]));
 
     /* 解析 artifact，并取得同一 thread 的运行参数与 I/O mapping */
-    rvrt_artifact_t artifact = {0};
+    rvrt_artifact_view_t artifact = {0};
     rvrt_artifact_status_t status =
         rvrt_artifact_read(artifact_data, artifact_size, &artifact);
     if (status != RVRT_ARTIFACT_OK) {
-        return fail_artifact("read", status);
+        result = fail_artifact("read", status);
+        goto cleanup;
     }
 
     rvrt_artifact_runtime_t runtime = {0};
@@ -81,17 +75,20 @@ int main(void)
     rvrt_artifact_output_mapping_view_t output_view = {0};
     status = rvrt_artifact_thread_runtime(&artifact, 0U, &runtime);
     if (status != RVRT_ARTIFACT_OK) {
-        return fail_artifact("runtime", status);
+        result = fail_artifact("runtime", status);
+        goto cleanup;
     }
     status =
         rvrt_artifact_get_input_mapping_view(&artifact, 0U, 0U, &input_view);
     if (status != RVRT_ARTIFACT_OK) {
-        return fail_artifact("input mapping", status);
+        result = fail_artifact("input mapping", status);
+        goto cleanup;
     }
     status =
         rvrt_artifact_get_output_mapping_view(&artifact, 0U, 0U, &output_view);
     if (status != RVRT_ARTIFACT_OK) {
-        return fail_artifact("output mapping", status);
+        result = fail_artifact("output mapping", status);
+        goto cleanup;
     }
 
     /* 在访问 PAICORE 前确认 artifact 与应用静态资源属于同一模型 */
@@ -105,69 +102,57 @@ int main(void)
         (output_view.entry_count != APP_OUTPUT_ELEMENTS) ||
         (output_view.element_count != APP_OUTPUT_ELEMENTS)) {
         printf("%s: artifact contract mismatch\r\n", APP_TITLE);
-        return 1;
+        result = 1;
+        goto cleanup;
     }
 
-    /* Session 只借用应用提供的 RX storage；配置帧通常每次部署加载一次 */
-    rvrt_session_t session = {0};
-    const rvrt_session_config_t config = {
-        .artifact = &artifact,
-        .thread_index = 0U,
-        .rx_frames = g_rx_frames,
-        .rx_capacity = RVRT_APP_RX_FRAMES,
+    const rvrt_runtime_session_open_config_t session_config = {
+        .artifact_data = artifact_data,
+        .artifact_size = artifact_size,
+        .frame_buffer = g_rx_frames,
+        .frame_capacity = RVRT_APP_RX_FRAMES,
     };
-    rvrt_session_status_t session_status = rvrt_session_init(&session, &config);
-    if (session_status != RVRT_SESSION_OK) {
-        return fail_session("init", session_status);
+    rvrt_runtime_status_t session_status =
+        rvrt_runtime_session_open(&session, &session_config);
+    if (session_status != RVRT_RUNTIME_OK) {
+        result = fail_runtime("open", session_status);
+        goto cleanup;
     }
-    session_status = rvrt_session_load_config(&session);
-    if (session_status != RVRT_SESSION_OK) {
-        return fail_session("load config", session_status);
+    session_status = rvrt_runtime_session_configure(&session);
+    if (session_status != RVRT_RUNTIME_OK) {
+        result = fail_runtime("configure", session_status);
+        goto cleanup;
+    }
+    const rvrt_thread_runner_open_config_t runner_config = {
+        .session = &session,
+        .thread_index = 0U,
+        .input_mapping_index = 0U,
+        .output_mapping_index = 0U,
+        .timeout_ms = APP_TIMEOUT_MS,
+    };
+    session_status = rvrt_thread_runner_open(&runner, &runner_config);
+    if (session_status != RVRT_RUNTIME_OK) {
+        result = fail_runtime("runner open", session_status);
+        goto cleanup;
     }
 
     for (uint32_t sample = 0U; sample < MNIST_SAMPLE_COUNT; ++sample) {
         /* 每个独立样本从确定状态开始；流式应用不会在样本间调用此接口。 */
-        session_status = rvrt_session_reset_model(&session, APP_TIMEOUT_MS);
-        if (session_status != RVRT_SESSION_OK) {
-            return fail_session("reset model", session_status);
-        }
-
         mnist_build_input(sample, g_input);
-
-        /* 输入 helper 内部完成 chunk 编码和发送循环。 */
-        for (uint32_t timestep = 0U; timestep < APP_TIMESTEPS; ++timestep) {
-            session_status = rvrt_session_send_input_timestep(
-                &session, &input_view, timestep,
-                &g_input[timestep * APP_INPUT_BYTES], APP_INPUT_BYTES,
-                g_workspace, workspace_capacity);
-            if (session_status != RVRT_SESSION_OK) {
-                return fail_session("send input", session_status);
-            }
-        }
-
-        /* 使用 artifact 的 completion_sync_timestep 推进完整流水线。 */
-        const rvrt_frame_t *rx_frames = NULL;
-        uint32_t rx_frame_count = 0U;
-        session_status = rvrt_session_sync_wait_until(
-            &session, runtime.completion_sync_timestep, APP_TIMEOUT_MS,
-            &rx_frames, &rx_frame_count);
-        if (session_status != RVRT_SESSION_OK) {
-            return fail_session("sync", session_status);
-        }
-
-        /* Runtime 将有效 STREAM DATA 归一化为 [应用时间步][输出元素]。 */
         uint8_t output[APP_TIMESTEPS * APP_OUTPUT_ELEMENTS] = {0};
-        rvrt_codec_status_t codec_status =
-            rvrt_decode_output_frames(&output_view, &runtime, rx_frames,
-                                      rx_frame_count, output, sizeof(output));
-        if (codec_status != RVRT_CODEC_STATUS_OK) {
-            return fail_codec("decode", codec_status);
+        session_status = rvrt_thread_runner_run_sample(
+            &runner, g_input, sizeof(g_input), APP_INPUT_BYTES, output,
+            sizeof(output), APP_OUTPUT_ELEMENTS);
+        if (session_status != RVRT_RUNTIME_OK) {
+            result = fail_runtime("run sample", session_status);
+            goto cleanup;
         }
         if (memcmp(output, mnist_expected_output[sample], sizeof(output)) !=
             0) {
             printf("%s: sample=%u output mismatch\r\n", APP_TITLE,
                    (unsigned)sample);
-            return 1;
+            result = 1;
+            goto cleanup;
         }
 
         /* spike sum 和 argmax 是 MNIST 业务后处理。 */
@@ -187,7 +172,8 @@ int main(void)
             printf("%s: sample=%u prediction=%u expected=%u\r\n", APP_TITLE,
                    (unsigned)sample, (unsigned)prediction,
                    (unsigned)mnist_expected_labels[sample]);
-            return 1;
+            result = 1;
+            goto cleanup;
         }
 
         printf("%s: sample=%u prediction=%u PASS\r\n", APP_TITLE,
@@ -197,5 +183,13 @@ int main(void)
     printf("%s: samples=%u decoded=%ux%u MNIST_PASS\r\n", APP_TITLE,
            (unsigned)MNIST_SAMPLE_COUNT, (unsigned)runtime.timesteps,
            (unsigned)output_view.element_count);
-    return 0;
+
+cleanup:
+    if (runner.opened) {
+        (void)rvrt_thread_runner_close(&runner);
+    }
+    if (session.opened) {
+        (void)rvrt_runtime_session_close(&session);
+    }
+    return result;
 }

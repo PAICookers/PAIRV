@@ -2,7 +2,7 @@
 #include "data.h"
 #include "debug.h"
 #include "frame_codec.h"
-#include "managed_packet.h"
+#include "frame_codec_internal.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,7 +30,7 @@
 #define TEST_VOLTAGE_LANES 4U
 #define TEST_VOLTAGE_COMPLETE_MASK 0x0FU
 
-_Static_assert(sizeof(rvrt_voltage_decode_state_t) == 5U,
+_Static_assert(sizeof(rvrt_voltage_decode_state_t) == 1U,
                "voltage decode state must not contain padding");
 
 typedef struct binary_file_s {
@@ -126,14 +126,15 @@ static int read_binary(const char *name, binary_file_t *out)
     return read_binary_at(RVRT_TEST_ASSET_DIR, name, out);
 }
 
-static int expect_status(rvrt_status_t actual, rvrt_status_t expected,
-                         const char *stage)
+static int expect_codec_status(rvrt_codec_status_t actual,
+                               rvrt_codec_status_t expected, const char *stage)
 {
     if (actual == expected) {
         return 0;
     }
     fprintf(stderr, "%s status=%s expected=%s\n", stage,
-            rvrt_status_string(actual), rvrt_status_string(expected));
+            rvrt_codec_status_string(actual),
+            rvrt_codec_status_string(expected));
     return 1;
 }
 
@@ -172,7 +173,7 @@ static rvrt_frame_t voltage_frame(uint32_t base, uint32_t lane, uint32_t value)
 }
 
 static int read_artifact(const char *fixture, binary_file_t *file,
-                         rvrt_artifact_t *artifact)
+                         rvrt_artifact_view_t *artifact)
 {
     if (read_binary(fixture, file) != 0) {
         return 1;
@@ -181,40 +182,77 @@ static int read_artifact(const char *fixture, binary_file_t *file,
         rvrt_artifact_read(file->data, file->size, artifact), fixture);
 }
 
-static int verify_artifact_basics(const rvrt_artifact_t *artifact,
-                                  uint32_t input_bytes, uint32_t output_bytes,
-                                  uint32_t rx_frame_count)
+static int verify_artifact_basics(const rvrt_artifact_view_t *artifact)
 {
     rvrt_artifact_info_t info = {0};
-    rvrt_artifact_capacity_t capacity = {0};
-    uint32_t cpu_task_count = UINT32_MAX;
-    if ((expect_artifact_status(rvrt_artifact_get_info(artifact, &info),
-                                "artifact info") != 0) ||
-        (expect_artifact_status(
-             rvrt_artifact_get_capacity(artifact, 0U, &capacity),
-             "artifact capacity") != 0) ||
-        (expect_artifact_status(
-             rvrt_artifact_cpu_task_count(artifact, &cpu_task_count),
-             "cpu task count") != 0)) {
+    uint32_t config_word_count = 0U;
+    uint32_t thread_count = 0U;
+    rvrt_artifact_core_offset_t root_core_offset = {0};
+    if (expect_artifact_status(rvrt_artifact_get_info(artifact, &info),
+                               "artifact info") != 0) {
         return 1;
     }
-    if ((info.schema_version != 1U) || (info.thread_count != 1U) ||
-        (capacity.input_bytes != input_bytes) ||
-        (capacity.final_output_bytes != output_bytes) ||
-        (capacity.rx_frame_count != rx_frame_count) || (cpu_task_count != 0U)) {
-        fprintf(stderr,
-                "artifact metadata mismatch schema=%u threads=%u input=%u "
-                "output=%u rx=%u cpu_tasks=%u\n",
-                (unsigned)info.schema_version, (unsigned)info.thread_count,
-                (unsigned)capacity.input_bytes,
-                (unsigned)capacity.final_output_bytes,
-                (unsigned)capacity.rx_frame_count, (unsigned)cpu_task_count);
+    if ((info.schema_version != 1U) || (info.thread_count != 1U)) {
+        fprintf(stderr, "artifact metadata mismatch schema=%u threads=%u\n",
+                (unsigned)info.schema_version, (unsigned)info.thread_count);
+        return 1;
+    }
+    if ((expect_artifact_status(
+             rvrt_artifact_config_word_count(artifact, &config_word_count),
+             "config word count") != 0) ||
+        (config_word_count < 2U) || ((config_word_count % 2U) != 0U)) {
+        fprintf(stderr, "invalid config word count=%u\n",
+                (unsigned)config_word_count);
+        return 1;
+    }
+    uint32_t config_high = 0U;
+    uint32_t config_low = 0U;
+    if (expect_artifact_status(rvrt_artifact_config_frame_words(
+                                   artifact, 0U, &config_high, &config_low),
+                               "config frame words") != 0) {
+        return 1;
+    }
+    if ((config_high != 2048U) || (config_low != 3U)) {
+        fprintf(stderr, "config frame mismatch high=%u low=%u\n",
+                (unsigned)config_high, (unsigned)config_low);
+        return 1;
+    }
+    if (rvrt_artifact_config_frame_words(artifact, config_word_count / 2U,
+                                         &config_high, &config_low) !=
+        RVRT_ARTIFACT_OUT_OF_RANGE) {
+        fprintf(stderr, "config frame bounds mismatch\n");
+        return 1;
+    }
+    if ((expect_artifact_status(
+             rvrt_artifact_thread_count(artifact, &thread_count),
+             "thread count") != 0) ||
+        (thread_count != info.thread_count)) {
+        fprintf(stderr, "thread count mismatch count=%u\n",
+                (unsigned)thread_count);
+        return 1;
+    }
+    if (expect_artifact_status(rvrt_artifact_thread_root_core_offset(
+                                   artifact, 0U, &root_core_offset),
+                               "thread root offset") != 0) {
+        return 1;
+    }
+    if ((root_core_offset.xy != 0) || (root_core_offset.x != 0) ||
+        (root_core_offset.y != 2)) {
+        fprintf(stderr, "thread root offset mismatch=(%d,%d,%d)\n",
+                root_core_offset.xy, root_core_offset.x, root_core_offset.y);
+        return 1;
+    }
+    if (rvrt_artifact_thread_root_core_offset(artifact, thread_count,
+                                              &root_core_offset) !=
+        RVRT_ARTIFACT_OUT_OF_RANGE) {
+        fprintf(stderr, "thread accessor bounds mismatch count=%u\n",
+                (unsigned)thread_count);
         return 1;
     }
     return 0;
 }
 
-static int verify_control_frames(const rvrt_artifact_t *artifact)
+static int verify_control_frames(const rvrt_artifact_view_t *artifact)
 {
     rvrt_frame_t init_frame = {0U, 0U};
     rvrt_frame_t sync_frame = {0U, 0U};
@@ -222,11 +260,12 @@ static int verify_control_frames(const rvrt_artifact_t *artifact)
     if ((expect_artifact_status(
              rvrt_artifact_thread_runtime(artifact, 0U, &runtime),
              "thread runtime") != 0) ||
-        (expect_status(rvrt_build_init_frame(artifact, 0U, &init_frame),
-                       RVRT_STATUS_OK, "build init") != 0) ||
-        (expect_status(rvrt_build_sync_frame(artifact, 0U, runtime.sync_steps,
-                                             &sync_frame),
-                       RVRT_STATUS_OK, "build sync") != 0)) {
+        (expect_codec_status(rvrt_build_init_frame(artifact, 0U, &init_frame),
+                             RVRT_CODEC_STATUS_OK, "build init") != 0) ||
+        (expect_codec_status(
+             rvrt_build_sync_payload_frame(
+                 artifact, 0U, runtime.completion_sync_timestep, &sync_frame),
+             RVRT_CODEC_STATUS_OK, "build sync") != 0)) {
         return 1;
     }
     if (((init_frame.high | init_frame.low) == 0U) ||
@@ -237,7 +276,7 @@ static int verify_control_frames(const rvrt_artifact_t *artifact)
     return 0;
 }
 
-static int verify_input_codec(const rvrt_artifact_t *artifact)
+static int verify_input_codec(const rvrt_artifact_view_t *artifact)
 {
     rvrt_artifact_input_mapping_view_t view = {0};
     if (expect_artifact_status(
@@ -245,9 +284,12 @@ static int verify_input_codec(const rvrt_artifact_t *artifact)
             "input mapping view") != 0) {
         return 1;
     }
-    if ((view.entry_count != 1U) || (view.bit_width != 8U)) {
-        fprintf(stderr, "input mapping mismatch entries=%u width=%u\n",
-                (unsigned)view.entry_count, (unsigned)view.bit_width);
+    if ((view.entry_count != 1U) || (view.element_count != 1U) ||
+        (view.bit_width != 8U)) {
+        fprintf(stderr,
+                "input mapping mismatch entries=%u elements=%u width=%u\n",
+                (unsigned)view.entry_count, (unsigned)view.element_count,
+                (unsigned)view.bit_width);
         return 1;
     }
 
@@ -256,9 +298,10 @@ static int verify_input_codec(const rvrt_artifact_t *artifact)
     rvrt_input_cursor_t cursor = {0U, 0U};
     uint32_t frame_count = 0U;
     rvrt_input_cursor_init(&cursor, 0U);
-    rvrt_status_t status = rvrt_encode_input_chunk(
+    rvrt_codec_status_t status = rvrt_encode_input_chunk(
         &view, &cursor, input, sizeof(input), &frame, 1U, &frame_count);
-    if ((expect_status(status, RVRT_STATUS_DONE, "encode input") != 0) ||
+    if ((expect_codec_status(status, RVRT_CODEC_STATUS_DONE, "encode input") !=
+         0) ||
         (frame_count != 1U) ||
         (((frame.high >> RVRT_FRAME_TYPE_OFFSET) & 0x3U) !=
          RVRT_FRAME_TYPE_WORK) ||
@@ -276,7 +319,8 @@ static int verify_input_codec(const rvrt_artifact_t *artifact)
     frame_count = UINT32_MAX;
     status = rvrt_encode_input_chunk(&view, &cursor, zero, sizeof(zero), &frame,
                                      1U, &frame_count);
-    if ((expect_status(status, RVRT_STATUS_DONE, "encode zero input") != 0) ||
+    if ((expect_codec_status(status, RVRT_CODEC_STATUS_DONE,
+                             "encode zero input") != 0) ||
         (frame_count != 0U)) {
         fprintf(stderr, "zero input emitted frames=%u\n",
                 (unsigned)frame_count);
@@ -285,7 +329,7 @@ static int verify_input_codec(const rvrt_artifact_t *artifact)
     return 0;
 }
 
-static int verify_data_codec(const rvrt_artifact_t *artifact)
+static int verify_data_codec(const rvrt_artifact_view_t *artifact)
 {
     rvrt_artifact_output_mapping_view_t view = {0};
     if (expect_artifact_status(
@@ -310,9 +354,10 @@ static int verify_data_codec(const rvrt_artifact_t *artifact)
         const rvrt_frame_t frame =
             work_frame(TEST_WORK_DATA_HIGH, i, TEST_EXPECTED_DATA[i]);
         bool written = false;
-        const rvrt_status_t status = rvrt_decode_output_frame(
+        const rvrt_codec_status_t status = rvrt_decode_output_frame(
             &view, &frame, output, TEST_DATA_ELEMENTS, &written);
-        if ((expect_status(status, RVRT_STATUS_OK, "decode DATA") != 0) ||
+        if ((expect_codec_status(status, RVRT_CODEC_STATUS_OK, "decode DATA") !=
+             0) ||
             !written || (output[i] != TEST_EXPECTED_DATA[i])) {
             fprintf(stderr, "DATA decode mismatch index=%u\n", (unsigned)i);
             return 1;
@@ -322,9 +367,10 @@ static int verify_data_codec(const rvrt_artifact_t *artifact)
     const rvrt_frame_t unmapped =
         work_frame(TEST_WORK_DATA_HIGH, TEST_DATA_ELEMENTS, 0x42U);
     bool written = true;
-    if ((expect_status(rvrt_decode_output_frame(&view, &unmapped, output,
-                                                TEST_DATA_ELEMENTS, &written),
-                       RVRT_STATUS_OK, "unmapped DATA") != 0) ||
+    if ((expect_codec_status(rvrt_decode_output_frame(&view, &unmapped, output,
+                                                      TEST_DATA_ELEMENTS,
+                                                      &written),
+                             RVRT_CODEC_STATUS_OK, "unmapped DATA") != 0) ||
         written) {
         fprintf(stderr, "DATA decoder accepted unmapped address\n");
         return 1;
@@ -332,9 +378,10 @@ static int verify_data_codec(const rvrt_artifact_t *artifact)
 
     const rvrt_frame_t voltage = voltage_frame(0U, 0U, 0x12345678U);
     written = true;
-    if ((expect_status(rvrt_decode_output_frame(&view, &voltage, output,
-                                                TEST_DATA_ELEMENTS, &written),
-                       RVRT_STATUS_OK, "voltage ignored by DATA") != 0) ||
+    if ((expect_codec_status(
+             rvrt_decode_output_frame(&view, &voltage, output,
+                                      TEST_DATA_ELEMENTS, &written),
+             RVRT_CODEC_STATUS_OK, "voltage ignored by DATA") != 0) ||
         written) {
         fprintf(stderr, "DATA decoder accepted voltage frame\n");
         return 1;
@@ -342,7 +389,7 @@ static int verify_data_codec(const rvrt_artifact_t *artifact)
     return 0;
 }
 
-static int verify_output_sequence(const rvrt_artifact_t *artifact)
+static int verify_output_sequence(const rvrt_artifact_view_t *artifact)
 {
     rvrt_artifact_output_mapping_view_t view = {0};
     if (expect_artifact_status(
@@ -353,9 +400,9 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
 
     rvrt_artifact_runtime_t runtime = {
         .timesteps = 8U,
-        .tick_depth = 3U,
-        .sync_steps = 10U,
-        .decode_mode = RVRT_DECODE_MODE_STREAM,
+        .pipeline_latency = 3U,
+        .completion_sync_timestep = 10U,
+        .output_time_encoding = RVRT_OUTPUT_TIME_ENCODING_STREAM,
     };
     rvrt_frame_t frames[13] = {0};
     frames[0] = (rvrt_frame_t){0xE0000000U, 0U};
@@ -365,17 +412,18 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
         frames[3U + timestep] = work_frame_at_timestep(
             TEST_WORK_DATA_HIGH, timestep, timestep, (uint8_t)(timestep + 1U));
     }
-    frames[11] = work_frame_at_timestep(TEST_WORK_DATA_HIGH, 8U, 0U, 0x55U);
+    frames[11] = work_frame_at_timestep(TEST_WORK_DATA_HIGH, runtime.timesteps,
+                                        0U, 0x55U);
     frames[12] = work_frame_at_timestep(TEST_WORK_DATA_HIGH, 3U,
                                         TEST_DATA_ELEMENTS, 0x66U);
 
     uint8_t output[8U * TEST_DATA_ELEMENTS];
     memset(output, 0xA5, sizeof(output));
-    if (expect_status(
+    if (expect_codec_status(
             rvrt_decode_output_frames(&view, &runtime, frames,
                                       (uint32_t)TEST_ARRAY_SIZE(frames), output,
                                       sizeof(output)),
-            RVRT_STATUS_OK, "decode output sequence") != 0) {
+            RVRT_CODEC_STATUS_OK, "decode output sequence") != 0) {
         return 1;
     }
     for (uint32_t timestep = 0U; timestep < runtime.timesteps; ++timestep) {
@@ -398,20 +446,21 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
     lcn_view.target_lcn = 2U;
     const rvrt_artifact_runtime_t lcn_runtime = {
         .timesteps = 2U,
-        .tick_depth = 3U,
-        .sync_steps = 4U,
-        .decode_mode = RVRT_DECODE_MODE_STREAM,
+        .pipeline_latency = 3U,
+        .completion_sync_timestep = 4U,
+        .output_time_encoding = RVRT_OUTPUT_TIME_ENCODING_STREAM,
     };
     const rvrt_frame_t lcn_frames[] = {
         work_frame_at_timestep(TEST_WORK_DATA_HIGH, 0U, 0U, 3U),
-        work_frame_at_timestep(TEST_WORK_DATA_HIGH, 4U, 1U, 4U),
+        work_frame_at_timestep(TEST_WORK_DATA_HIGH, 1U << lcn_view.target_lcn,
+                               1U, 4U),
     };
     uint8_t lcn_output[2U * TEST_DATA_ELEMENTS] = {0};
-    if ((expect_status(
+    if ((expect_codec_status(
              rvrt_decode_output_frames(&lcn_view, &lcn_runtime, lcn_frames,
                                        (uint32_t)TEST_ARRAY_SIZE(lcn_frames),
                                        lcn_output, sizeof(lcn_output)),
-             RVRT_STATUS_OK, "target LCN sequence") != 0) ||
+             RVRT_CODEC_STATUS_OK, "target LCN sequence") != 0) ||
         (lcn_output[0] != 3U) || (lcn_output[TEST_DATA_ELEMENTS + 1U] != 4U)) {
         fprintf(stderr, "target LCN application timestep mismatch\n");
         return 1;
@@ -421,9 +470,10 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
     const rvrt_frame_t later =
         work_frame_at_timestep(TEST_WORK_DATA_HIGH, 1U, 0U, 0x42U);
     uint8_t single[TEST_DATA_ELEMENTS] = {0};
-    if ((expect_status(rvrt_decode_output_frame(&view, &later, single,
-                                                TEST_DATA_ELEMENTS, &written),
-                       RVRT_STATUS_OK, "legacy decoder later timestep") != 0) ||
+    if ((expect_codec_status(
+             rvrt_decode_output_frame(&view, &later, single, TEST_DATA_ELEMENTS,
+                                      &written),
+             RVRT_CODEC_STATUS_OK, "legacy decoder later timestep") != 0) ||
         written) {
         fprintf(stderr, "legacy decoder accepted a later timestep\n");
         return 1;
@@ -433,13 +483,14 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
     memset(cleared, 0xA5, sizeof(cleared));
     const rvrt_artifact_runtime_t single_runtime = {
         .timesteps = 1U,
-        .tick_depth = 1U,
-        .sync_steps = 1U,
-        .decode_mode = RVRT_DECODE_MODE_STREAM,
+        .pipeline_latency = 1U,
+        .completion_sync_timestep = 1U,
+        .output_time_encoding = RVRT_OUTPUT_TIME_ENCODING_STREAM,
     };
-    if ((expect_status(rvrt_decode_output_frames(&view, &single_runtime, NULL,
-                                                 0U, cleared, sizeof(cleared)),
-                       RVRT_STATUS_OK, "empty output sequence") != 0) ||
+    if ((expect_codec_status(
+             rvrt_decode_output_frames(&view, &single_runtime, NULL, 0U,
+                                       cleared, sizeof(cleared)),
+             RVRT_CODEC_STATUS_OK, "empty output sequence") != 0) ||
         (memcmp(cleared, (uint8_t[TEST_DATA_ELEMENTS]){0}, sizeof(cleared)) !=
          0)) {
         fprintf(stderr, "empty sequence was not cleared\n");
@@ -449,59 +500,61 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
     rvrt_artifact_runtime_t invalid_runtime = runtime;
     rvrt_artifact_output_mapping_view_t invalid_view = view;
     invalid_view.kind = RVRT_OUTPUT_VOLTAGE;
-    if (expect_status(
+    if (expect_codec_status(
             rvrt_decode_output_frames(&invalid_view, &runtime, frames,
                                       (uint32_t)TEST_ARRAY_SIZE(frames), output,
                                       sizeof(output)),
-            RVRT_STATUS_UNSUPPORTED, "VOLTAGE output sequence") != 0) {
+            RVRT_CODEC_STATUS_UNSUPPORTED, "VOLTAGE output sequence") != 0) {
         return 1;
     }
-    if ((expect_status(rvrt_decode_output_frames(&view, &runtime, NULL, 1U,
-                                                 output, sizeof(output)),
-                       RVRT_STATUS_NULL_ARGUMENT,
-                       "missing frame sequence") != 0) ||
-        (expect_status(rvrt_decode_output_frames(NULL, &runtime, NULL, 0U,
-                                                 output, sizeof(output)),
-                       RVRT_STATUS_NULL_ARGUMENT,
-                       "missing output view") != 0)) {
+    if ((expect_codec_status(
+             rvrt_decode_output_frames(&view, &runtime, NULL, 1U, output,
+                                       sizeof(output)),
+             RVRT_CODEC_STATUS_NULL_ARGUMENT, "missing frame sequence") != 0) ||
+        (expect_codec_status(rvrt_decode_output_frames(NULL, &runtime, NULL, 0U,
+                                                       output, sizeof(output)),
+                             RVRT_CODEC_STATUS_NULL_ARGUMENT,
+                             "missing output view") != 0)) {
         return 1;
     }
     invalid_runtime.timesteps = 0U;
-    if (expect_status(rvrt_decode_output_frames(&view, &invalid_runtime, NULL,
-                                                0U, output, sizeof(output)),
-                      RVRT_STATUS_BAD_VALUE, "zero output timesteps") != 0) {
+    if (expect_codec_status(
+            rvrt_decode_output_frames(&view, &invalid_runtime, NULL, 0U, output,
+                                      sizeof(output)),
+            RVRT_CODEC_STATUS_BAD_VALUE, "zero output timesteps") != 0) {
         return 1;
     }
     invalid_runtime = runtime;
-    invalid_runtime.tick_depth = 0U;
-    if (expect_status(rvrt_decode_output_frames(&view, &invalid_runtime, NULL,
-                                                0U, output, sizeof(output)),
-                      RVRT_STATUS_BAD_VALUE, "zero tick depth") != 0) {
+    invalid_runtime.pipeline_latency = 0U;
+    if (expect_codec_status(
+            rvrt_decode_output_frames(&view, &invalid_runtime, NULL, 0U, output,
+                                      sizeof(output)),
+            RVRT_CODEC_STATUS_BAD_VALUE, "zero tick depth") != 0) {
         return 1;
     }
     invalid_runtime = runtime;
-    invalid_runtime.decode_mode = RVRT_DECODE_MODE_STEP;
-    if (expect_status(
+    invalid_runtime.output_time_encoding = RVRT_OUTPUT_TIME_ENCODING_STEP;
+    if (expect_codec_status(
             rvrt_decode_output_frames(&view, &invalid_runtime, frames,
                                       (uint32_t)TEST_ARRAY_SIZE(frames), output,
                                       sizeof(output)),
-            RVRT_STATUS_UNSUPPORTED, "STEP output sequence") != 0) {
+            RVRT_CODEC_STATUS_UNSUPPORTED, "STEP output sequence") != 0) {
         return 1;
     }
     invalid_runtime = runtime;
-    invalid_runtime.sync_steps--;
-    if (expect_status(
+    invalid_runtime.completion_sync_timestep--;
+    if (expect_codec_status(
             rvrt_decode_output_frames(&view, &invalid_runtime, frames,
                                       (uint32_t)TEST_ARRAY_SIZE(frames), output,
                                       sizeof(output)),
-            RVRT_STATUS_BAD_VALUE, "invalid sync metadata") != 0) {
+            RVRT_CODEC_STATUS_BAD_VALUE, "invalid sync metadata") != 0) {
         return 1;
     }
-    if (expect_status(
+    if (expect_codec_status(
             rvrt_decode_output_frames(&view, &runtime, frames,
                                       (uint32_t)TEST_ARRAY_SIZE(frames), output,
                                       sizeof(output) - 1U),
-            RVRT_STATUS_OUT_OF_RANGE, "small output sequence") != 0) {
+            RVRT_CODEC_STATUS_OUT_OF_RANGE, "small output sequence") != 0) {
         return 1;
     }
 
@@ -509,11 +562,11 @@ static int verify_output_sequence(const rvrt_artifact_t *artifact)
     oversized.element_count = UINT32_MAX;
     invalid_runtime = runtime;
     invalid_runtime.timesteps = 2U;
-    invalid_runtime.sync_steps = 4U;
-    return expect_status(
+    invalid_runtime.completion_sync_timestep = 4U;
+    return expect_codec_status(
         rvrt_decode_output_frames(&oversized, &invalid_runtime, NULL, 0U,
                                   output, sizeof(output)),
-        RVRT_STATUS_OUT_OF_RANGE, "output sequence size overflow");
+        RVRT_CODEC_STATUS_OUT_OF_RANGE, "output sequence size overflow");
 }
 
 static int verify_mnist_sequence(void)
@@ -539,7 +592,7 @@ static int verify_mnist_sequence(void)
     }
 
     binary_file_t artifact_file = {0};
-    rvrt_artifact_t artifact = {0};
+    rvrt_artifact_view_t artifact = {0};
     int result = 1;
     if ((read_binary_at(RVRT_MNIST_ASSET_DIR, "compile_artifacts.bin",
                         &artifact_file) != 0) ||
@@ -560,9 +613,9 @@ static int verify_mnist_sequence(void)
              "MNIST output mapping") != 0)) {
         goto cleanup;
     }
-    if ((runtime.timesteps != 8U) || (runtime.tick_depth != 3U) ||
-        (runtime.sync_steps != 10U) ||
-        (runtime.decode_mode != RVRT_DECODE_MODE_STREAM) ||
+    if ((runtime.timesteps != 8U) || (runtime.pipeline_latency != 3U) ||
+        (runtime.completion_sync_timestep != 10U) ||
+        (runtime.output_time_encoding != RVRT_OUTPUT_TIME_ENCODING_STREAM) ||
         (view.kind != RVRT_OUTPUT_DATA) || (view.element_count != 10U) ||
         (sizeof(mnist_expected_output[0]) !=
          runtime.timesteps * view.element_count)) {
@@ -577,17 +630,19 @@ static int verify_mnist_sequence(void)
              ++axon_bit_idx) {
             rvrt_artifact_output_entry_t entry = {0};
             bool found = false;
-            if ((expect_artifact_status(rvrt_artifact_output_mapping_find(
-                                            &view, axon_bit_idx, &entry,
-                                            &found),
-                                        "MNIST output entry") != 0) ||
+            if ((expect_artifact_status(
+                     rvrt_artifact_output_mapping_find(&view, axon_bit_idx,
+                                                       &entry, &found),
+                     "MNIST output entry") != 0) ||
                 !found) {
                 goto cleanup;
             }
             for (uint32_t timestep = 0U; timestep < runtime.timesteps;
                  ++timestep) {
-                const uint8_t value = mnist_expected_output[sample][
-                    timestep * view.element_count + entry.elem_idx];
+                const uint8_t value =
+                    mnist_expected_output[sample]
+                                         [timestep * view.element_count +
+                                          entry.elem_idx];
                 if (value != 0U) {
                     frames[frame_count++] = work_frame_at_timestep(
                         TEST_WORK_DATA_HIGH, timestep, axon_bit_idx, value);
@@ -597,10 +652,10 @@ static int verify_mnist_sequence(void)
         frames[frame_count++] = (rvrt_frame_t){0xE0000000U, 0U};
 
         uint8_t output[80] = {0};
-        if ((expect_status(rvrt_decode_output_frames(&view, &runtime, frames,
-                                                     frame_count, output,
-                                                     sizeof(output)),
-                           RVRT_STATUS_OK, "MNIST sequence decode") != 0) ||
+        if ((expect_codec_status(
+                 rvrt_decode_output_frames(&view, &runtime, frames, frame_count,
+                                           output, sizeof(output)),
+                 RVRT_CODEC_STATUS_OK, "MNIST sequence decode") != 0) ||
             (memcmp(output, mnist_expected_output[sample], sizeof(output)) !=
              0)) {
             fprintf(stderr, "MNIST sample=%u 8x10 sequence mismatch\n",
@@ -609,8 +664,7 @@ static int verify_mnist_sequence(void)
         }
 
         uint32_t sums[10] = {0};
-        for (uint32_t timestep = 0U; timestep < runtime.timesteps;
-             ++timestep) {
+        for (uint32_t timestep = 0U; timestep < runtime.timesteps; ++timestep) {
             for (uint32_t elem = 0U; elem < view.element_count; ++elem) {
                 sums[elem] += output[timestep * view.element_count + elem];
             }
@@ -635,7 +689,7 @@ cleanup:
     return result;
 }
 
-static int verify_voltage_mapping(const rvrt_artifact_t *artifact,
+static int verify_voltage_mapping(const rvrt_artifact_view_t *artifact,
                                   rvrt_artifact_output_mapping_view_t *view)
 {
     if (expect_artifact_status(
@@ -685,6 +739,16 @@ verify_voltage_decode(const rvrt_artifact_output_mapping_view_t *view)
 
     int32_t output[TEST_DATA_ELEMENTS] = {0};
     rvrt_voltage_decode_state_t state[TEST_DATA_ELEMENTS] = {0};
+    int32_t fast_output[TEST_DATA_ELEMENTS] = {0};
+    rvrt_voltage_decode_state_t fast_state[TEST_DATA_ELEMENTS] = {0};
+    bool fast_data = false;
+    bool fast_voltage = false;
+    if ((rvrt_output_fast_layout(view, &fast_data, &fast_voltage) !=
+         RVRT_CODEC_STATUS_OK) ||
+        fast_data || !fast_voltage) {
+        fprintf(stderr, "canonical voltage layout was not recognized\n");
+        return 1;
+    }
     uint32_t written_count = 0U;
     for (size_t i = 0U; i < TEST_ARRAY_SIZE(events); ++i) {
         const voltage_event_t event = events[i];
@@ -692,10 +756,21 @@ verify_voltage_decode(const rvrt_artifact_output_mapping_view_t *view)
             voltage_frame(TEST_VOLTAGE_BASES[event.elem_idx], event.lane,
                           values[event.elem_idx]);
         bool written = false;
-        const rvrt_status_t status =
+        const rvrt_codec_status_t status =
             rvrt_decode_voltage_frame(view, &frame, output, TEST_DATA_ELEMENTS,
                                       state, TEST_DATA_ELEMENTS, &written);
-        if (expect_status(status, RVRT_STATUS_OK, "decode voltage") != 0) {
+        if (expect_codec_status(status, RVRT_CODEC_STATUS_OK,
+                                "decode voltage") != 0) {
+            return 1;
+        }
+        if ((rvrt_decode_output_fast_frame(
+                 view, &frame, 1U, (uint8_t *)(void *)fast_output,
+                 sizeof(fast_output), sizeof(fast_output), fast_state,
+                 TEST_DATA_ELEMENTS) != status) ||
+            (memcmp(output, fast_output, sizeof(output)) != 0) ||
+            (memcmp(state, fast_state, sizeof(state)) != 0)) {
+            fprintf(stderr, "fast voltage differs on interleaved lane %zu\n",
+                    i);
             return 1;
         }
         written_count += written ? 1U : 0U;
@@ -731,17 +806,17 @@ verify_voltage_errors(const rvrt_artifact_output_mapping_view_t *view)
     const uint32_t value = 0x12345678U;
     const rvrt_frame_t lane2 = voltage_frame(0U, 2U, value);
     bool written = false;
-    if ((expect_status(rvrt_decode_voltage_frame(view, &lane2, output,
-                                                 TEST_DATA_ELEMENTS, state,
-                                                 TEST_DATA_ELEMENTS, &written),
-                       RVRT_STATUS_OK, "first voltage lane") != 0) ||
+    if ((expect_codec_status(
+             rvrt_decode_voltage_frame(view, &lane2, output, TEST_DATA_ELEMENTS,
+                                       state, TEST_DATA_ELEMENTS, &written),
+             RVRT_CODEC_STATUS_OK, "first voltage lane") != 0) ||
         written) {
         return 1;
     }
-    if (expect_status(rvrt_decode_voltage_frame(view, &lane2, output,
-                                                TEST_DATA_ELEMENTS, state,
-                                                TEST_DATA_ELEMENTS, &written),
-                      RVRT_STATUS_BAD_VALUE, "duplicate voltage lane") != 0) {
+    if (expect_codec_status(
+            rvrt_decode_voltage_frame(view, &lane2, output, TEST_DATA_ELEMENTS,
+                                      state, TEST_DATA_ELEMENTS, &written),
+            RVRT_CODEC_STATUS_BAD_VALUE, "duplicate voltage lane") != 0) {
         return 1;
     }
 
@@ -751,10 +826,11 @@ verify_voltage_errors(const rvrt_artifact_output_mapping_view_t *view)
         const rvrt_frame_t frame =
             voltage_frame(7U, partial_lanes[i], 0x80000001U);
         written = false;
-        if ((expect_status(rvrt_decode_voltage_frame(
-                               view, &frame, output, TEST_DATA_ELEMENTS,
-                               partial, TEST_DATA_ELEMENTS, &written),
-                           RVRT_STATUS_OK, "partial voltage") != 0) ||
+        if ((expect_codec_status(rvrt_decode_voltage_frame(
+                                     view, &frame, output, TEST_DATA_ELEMENTS,
+                                     partial, TEST_DATA_ELEMENTS, &written),
+                                 RVRT_CODEC_STATUS_OK,
+                                 "partial voltage") != 0) ||
             written) {
             return 1;
         }
@@ -767,10 +843,10 @@ verify_voltage_errors(const rvrt_artifact_output_mapping_view_t *view)
 
     const rvrt_frame_t unmapped = voltage_frame(33U, 0U, value);
     written = true;
-    if ((expect_status(rvrt_decode_voltage_frame(view, &unmapped, output,
-                                                 TEST_DATA_ELEMENTS, state,
-                                                 TEST_DATA_ELEMENTS, &written),
-                       RVRT_STATUS_OK, "unmapped voltage") != 0) ||
+    if ((expect_codec_status(rvrt_decode_voltage_frame(
+                                 view, &unmapped, output, TEST_DATA_ELEMENTS,
+                                 state, TEST_DATA_ELEMENTS, &written),
+                             RVRT_CODEC_STATUS_OK, "unmapped voltage") != 0) ||
         written) {
         fprintf(stderr, "voltage decoder accepted unmapped address\n");
         return 1;
@@ -778,10 +854,11 @@ verify_voltage_errors(const rvrt_artifact_output_mapping_view_t *view)
 
     const rvrt_frame_t data_frame = work_frame(TEST_WORK_DATA_HIGH, 0U, 0x78U);
     written = true;
-    if ((expect_status(rvrt_decode_voltage_frame(view, &data_frame, output,
-                                                 TEST_DATA_ELEMENTS, state,
-                                                 TEST_DATA_ELEMENTS, &written),
-                       RVRT_STATUS_OK, "DATA ignored by voltage") != 0) ||
+    if ((expect_codec_status(rvrt_decode_voltage_frame(
+                                 view, &data_frame, output, TEST_DATA_ELEMENTS,
+                                 state, TEST_DATA_ELEMENTS, &written),
+                             RVRT_CODEC_STATUS_OK,
+                             "DATA ignored by voltage") != 0) ||
         written) {
         fprintf(stderr, "voltage decoder accepted DATA frame\n");
         return 1;
@@ -790,31 +867,19 @@ verify_voltage_errors(const rvrt_artifact_output_mapping_view_t *view)
     rvrt_artifact_output_mapping_view_t invalid = *view;
     invalid.kind = RVRT_OUTPUT_DATA;
     written = false;
-    if (expect_status(rvrt_decode_voltage_frame(&invalid, &lane2, output,
-                                                TEST_DATA_ELEMENTS, state,
-                                                TEST_DATA_ELEMENTS, &written),
-                      RVRT_STATUS_UNSUPPORTED, "wrong voltage kind") != 0) {
+    if (expect_codec_status(rvrt_decode_voltage_frame(
+                                &invalid, &lane2, output, TEST_DATA_ELEMENTS,
+                                state, TEST_DATA_ELEMENTS, &written),
+                            RVRT_CODEC_STATUS_UNSUPPORTED,
+                            "wrong voltage kind") != 0) {
         return 1;
     }
     invalid = *view;
     invalid.dtype = TEST_DTYPE_UINT8;
-    return expect_status(
+    return expect_codec_status(
         rvrt_decode_voltage_frame(&invalid, &lane2, output, TEST_DATA_ELEMENTS,
                                   state, TEST_DATA_ELEMENTS, &written),
-        RVRT_STATUS_UNSUPPORTED, "wrong voltage dtype");
-}
-
-static int verify_managed_packet(void)
-{
-    static const uint8_t crc_vector[] = {'1', '2', '3', '4', '5',
-                                         '6', '7', '8', '9'};
-    const uint32_t crc =
-        rvrt_packet_crc32(crc_vector, (uint32_t)sizeof(crc_vector));
-    if (crc != 0xCBF43926UL) {
-        fprintf(stderr, "crc32 mismatch: %08x\n", (unsigned)crc);
-        return 1;
-    }
-    return 0;
+        RVRT_CODEC_STATUS_UNSUPPORTED, "wrong voltage dtype");
 }
 
 int main(void)
@@ -823,8 +888,8 @@ int main(void)
 
     binary_file_t data_file = {0};
     binary_file_t voltage_file = {0};
-    rvrt_artifact_t data_artifact = {0};
-    rvrt_artifact_t voltage_artifact = {0};
+    rvrt_artifact_view_t data_artifact = {0};
+    rvrt_artifact_view_t voltage_artifact = {0};
     rvrt_artifact_output_mapping_view_t voltage_view = {0};
     int result = 1;
 
@@ -832,12 +897,8 @@ int main(void)
          0) ||
         (read_artifact("compile_artifacts_voltage.bin", &voltage_file,
                        &voltage_artifact) != 0) ||
-        (verify_artifact_basics(&data_artifact, 1U, TEST_DATA_ELEMENTS,
-                                TEST_DATA_ELEMENTS + 1U) != 0) ||
-        (verify_artifact_basics(&voltage_artifact, 1U,
-                                TEST_DATA_ELEMENTS * (uint32_t)sizeof(int32_t),
-                                TEST_DATA_ELEMENTS * TEST_VOLTAGE_LANES + 1U) !=
-         0) ||
+        (verify_artifact_basics(&data_artifact) != 0) ||
+        (verify_artifact_basics(&voltage_artifact) != 0) ||
         (verify_control_frames(&data_artifact) != 0) ||
         (verify_input_codec(&data_artifact) != 0) ||
         (verify_data_codec(&data_artifact) != 0) ||
@@ -845,8 +906,7 @@ int main(void)
         (verify_mnist_sequence() != 0) ||
         (verify_voltage_mapping(&voltage_artifact, &voltage_view) != 0) ||
         (verify_voltage_decode(&voltage_view) != 0) ||
-        (verify_voltage_errors(&voltage_view) != 0) ||
-        (verify_managed_packet() != 0)) {
+        (verify_voltage_errors(&voltage_view) != 0)) {
         goto cleanup;
     }
 

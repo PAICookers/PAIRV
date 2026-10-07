@@ -98,16 +98,16 @@ typedef struct rvrt_input_cursor_s {
 /**
  * @brief Build the initialization control frame for an artifact thread.
  *
- * Standard session use should call rvrt_session_reset_model(), which sends
- * this frame through an armed completion barrier. Use this builder directly
- * only when implementing a custom transport layer.
+ * ThreadRunner sends this frame through an armed completion barrier at the
+ * start of each sample. Use this builder
+ * directly only when implementing a custom transport layer.
  * @param artifact Verified artifact providing the thread root address.
  * @param thread_index Zero-based artifact thread index.
  * @param frame Receives the logical high/low frame words; must not be NULL.
  * @return RVRT_CODEC_STATUS_OK on success; otherwise an argument or artifact
  * status.
  */
-rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
+rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_view_t *artifact,
                                           uint32_t thread_index,
                                           rvrt_frame_t *frame);
 
@@ -126,7 +126,7 @@ rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
  * sync_payload exceeds the payload width; or an argument/artifact status.
  */
 rvrt_codec_status_t
-rvrt_build_sync_payload_frame(const rvrt_artifact_t *artifact,
+rvrt_build_sync_payload_frame(const rvrt_artifact_view_t *artifact,
                               uint32_t thread_index, uint32_t sync_payload,
                               rvrt_frame_t *frame);
 
