@@ -1,0 +1,4 @@
+interface:
+  display_name: "PAIRV 开发与验证"
+  short_description: "按需开展 PAIRV 固件构建、runtime 开发、协议验证、依赖升级与资料查询"
+  default_prompt: "使用 $pairv 完成指定的 PAIRV 任务，只读取相关工作流和公共操作说明。"
