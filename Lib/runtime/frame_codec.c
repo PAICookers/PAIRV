@@ -44,6 +44,9 @@
 #define FC_DTYPE_UINT8 7U
 #define FC_DTYPE_INT8 8U
 
+#define FC_VOLT_GROUP_SIZE_SHIFT 3U
+#define FC_VOLT_GROUP_PITCH_SHIFT 5U
+
 typedef struct dtype_info {
     uint8_t bits;
     bool is_signed;
@@ -154,7 +157,7 @@ static rvrt_codec_status_t frame_dest(uint32_t header,
  * payload occupies the low 24 bits; callers must use a control header value.
  */
 static rvrt_codec_status_t
-build_control_frame(const rvrt_artifact_t *artifact, uint32_t thread_index,
+build_control_frame(const rvrt_artifact_view_t *artifact, uint32_t thread_index,
                     uint32_t header, uint32_t payload, rvrt_frame_t *frame)
 {
     if ((artifact == NULL) || (frame == NULL)) {
@@ -328,7 +331,7 @@ static inline bool rvrt_frame_is_work_type2(const rvrt_frame_t *frame)
             RVRT_FRAME_WORK_KIND_VOLTAGE);
 }
 
-rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
+rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_view_t *artifact,
                                           uint32_t thread_index,
                                           rvrt_frame_t *frame)
 {
@@ -336,7 +339,7 @@ rvrt_codec_status_t rvrt_build_init_frame(const rvrt_artifact_t *artifact,
 }
 
 rvrt_codec_status_t
-rvrt_build_sync_payload_frame(const rvrt_artifact_t *artifact,
+rvrt_build_sync_payload_frame(const rvrt_artifact_view_t *artifact,
                               uint32_t thread_index, uint32_t sync_payload,
                               rvrt_frame_t *frame)
 {
@@ -627,6 +630,105 @@ rvrt_codec_status_t rvrt_decode_voltage_frame(
 {
     return decode_voltage_work_frame(view, frame, 1U, output, output_count,
                                      output_count, state, state_count, written);
+}
+
+rvrt_codec_status_t
+rvrt_output_fast_layout(const rvrt_artifact_output_mapping_view_t *view,
+                        bool *data, bool *voltage)
+{
+    if ((view == NULL) || (view->entries == NULL) || (data == NULL) ||
+        (voltage == NULL)) {
+        return RVRT_CODEC_STATUS_NULL_ARGUMENT;
+    }
+    *data = false;
+    *voltage = false;
+    const bool is_data =
+        (view->kind == RVRT_OUTPUT_DATA) && (view->dtype == FC_DTYPE_UINT1);
+    const bool is_voltage = (view->kind == RVRT_OUTPUT_VOLTAGE) &&
+                            (view->dtype == RVRT_DTYPE_VOLTAGE_INT32);
+    if ((!is_data && !is_voltage) ||
+        (view->entry_count != view->element_count) ||
+        (view->element_count == 0U)) {
+        return RVRT_CODEC_STATUS_OK;
+    }
+    for (uint32_t element = 0U; element < view->element_count; ++element) {
+        rvrt_artifact_output_entry_t entry = {0};
+        bool found = false;
+        const uint32_t expected_axon =
+            is_voltage ? ((element >> FC_VOLT_GROUP_SIZE_SHIFT)
+                          << FC_VOLT_GROUP_PITCH_SHIFT) |
+                             (element & ((1U << FC_VOLT_GROUP_SIZE_SHIFT) - 1U))
+                       : element;
+        const rvrt_artifact_status_t status = rvrt_artifact_output_mapping_find(
+            view, expected_axon, &entry, &found);
+        if (status != RVRT_ARTIFACT_OK) {
+            return codec_status_from_artifact(status);
+        }
+        if (!found || (entry.elem_idx != element)) {
+            return RVRT_CODEC_STATUS_OK;
+        }
+    }
+    *data = is_data;
+    *voltage = is_voltage;
+    return RVRT_CODEC_STATUS_OK;
+}
+
+rvrt_codec_status_t rvrt_decode_output_fast_frame(
+    const rvrt_artifact_output_mapping_view_t *view, const rvrt_frame_t *frame,
+    uint32_t total_timesteps, uint8_t *output, size_t output_size,
+    size_t output_stride, rvrt_voltage_decode_state_t *voltage_state,
+    uint32_t voltage_state_capacity)
+{
+    if ((view == NULL) || (frame == NULL) || (output == NULL) ||
+        (output_stride == 0U)) {
+        return RVRT_CODEC_STATUS_NULL_ARGUMENT;
+    }
+    const uint32_t kind = (view->kind == RVRT_OUTPUT_DATA)
+                              ? RVRT_FRAME_WORK_KIND_DATA
+                              : RVRT_FRAME_WORK_KIND_VOLTAGE;
+    uint32_t timestep = 0U;
+    uint32_t axon = 0U;
+    if (!rvrt_frame_is_work(frame) ||
+        (((frame->high >> RVRT_FRAME_WORK_KIND_OFFSET) & 1U) != kind) ||
+        (rvrt_output_frame_address(view, frame, &timestep, &axon) !=
+         RVRT_CODEC_STATUS_OK) ||
+        (timestep >= total_timesteps)) {
+        return RVRT_CODEC_STATUS_OK;
+    }
+    if (view->kind == RVRT_OUTPUT_DATA) {
+        const uint32_t payload = frame->low & RVRT_WF_PAYLOAD_MASK;
+        if ((axon >= view->element_count) || ((payload & ~1U) != 0U)) {
+            return RVRT_CODEC_STATUS_OK;
+        }
+        const size_t index = (size_t)timestep * output_stride + axon;
+        if (index >= output_size) {
+            return RVRT_CODEC_STATUS_OUT_OF_RANGE;
+        }
+        output[index] = (uint8_t)payload;
+        return RVRT_CODEC_STATUS_OK;
+    }
+
+    /* Four byte lanes per group of eight elements: base=group*32+element%8.
+     * The verified formula avoids FlatBuffer searches and division in IRQ. */
+    const uint32_t element =
+        ((axon >> FC_VOLT_GROUP_PITCH_SHIFT) << FC_VOLT_GROUP_SIZE_SHIFT) |
+        (axon & ((1U << FC_VOLT_GROUP_SIZE_SHIFT) - 1U));
+    const uint32_t lane =
+        (axon >> FC_VOLT_GROUP_SIZE_SHIFT) & (RVRT_VOLT_LANE_COUNT - 1U);
+    if (element >= view->element_count) {
+        return RVRT_CODEC_STATUS_OK;
+    }
+    const size_t stride = output_stride / sizeof(int32_t);
+    if ((voltage_state == NULL) || (stride == 0U) ||
+        ((output_stride % sizeof(int32_t)) != 0U)) {
+        return RVRT_CODEC_STATUS_OUT_OF_RANGE;
+    }
+    return rvrt_store_voltage_lane(
+        (int32_t *)(void *)output, (size_t)timestep * stride + element,
+        output_size / sizeof(int32_t), voltage_state,
+        (size_t)timestep * view->element_count + element,
+        voltage_state_capacity, lane,
+        (uint8_t)(frame->low & RVRT_WF_PAYLOAD_MASK), NULL);
 }
 
 rvrt_codec_status_t rvrt_decode_output_frames_incremental(

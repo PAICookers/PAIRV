@@ -1,213 +1,296 @@
-# PAIRV Runtime
+# PAIRV C Runtime
 
-`Lib/runtime` 是 PAIRV 裸机应用使用 PAIBox 编译产物的轻量运行时。它
-负责读取 FlatBuffers artifact、生成 PAICORE 帧、发送输入、处理 IRQ 和
-同步、解码输出；模型张量的拥有、预处理、后处理和应用业务仍由上层负责。
+`Lib/runtime` 是 PAIRV 裸机应用使用 PAIBox `compile_artifacts.bin` 的运行时。它
+验证 FlatBuffers artifact，读取线程和 mapping 元数据，编码输入 PAICORE frame，
+通过 NoC/IRQ 发送和接收数据，并将 DATA 或 VOLTAGE 输出解码到应用提供的缓冲区。
+应用仍负责 tensor 内存、预处理、后处理、模型顺序和业务错误呈现。
 
-这份文档回答三个问题：runtime 如何组织、应用如何调用、术语和时间语义
-如何保持一致。产物字段的完整说明见
-[`generated/README.md`](generated/README.md)。
-
-## 先看哪条路径
-
-| 需求                          | 入口                 | 说明                                                      |
-| ----------------------------- | -------------------- | --------------------------------------------------------- |
-| 单线程、固定首层输入输出      | `paicore_runner.h` | `deploy -> run_sample -> release`，适合 demo 和简单应用 |
-| 多步输入、显式同步或自定义 RX | `session.h`        | 应用管理 session 生命周期、输入帧和输出解码               |
-| 研究中的任务编排实验          | `experimental/`    | 不属于默认 runtime ABI，也不由普通 runtime 构建自动收集   |
-
-不要把 `experimental/artifact_executor.*` 或 `experimental/task_api.h` 当作
-当前 `.fbs` 的默认执行计划接口。当前 schema 描述的是模型映射、运行时参数
-和配置帧，不描述 CPU task 或通用 execution plan。
-
-## 设计边界
+当前生产执行路径是：
 
 ```text
-compile_artifacts.bin
-        |
-        v
-artifact_reader  ---- 读取 schema、线程、映射和配置帧
-        |
-        +--> frame_codec ---- 输入/输出 PAICORE frame 编解码
-        |
-        +--> session_io ----- UART/IRQ 传输和 RX barrier
-        |
-        +--> session -------- 手动生命周期、分块输入、同步和解码
-        |
-        +--> paicore_runner - 单 runner 的 deploy/run/release 便捷封装
+Artifact bytes
+    -> RuntimeSession（物理传输、配置、IRQ 和故障所有者）
+    -> ThreadRunner（一个 artifact thread + input/output mapping）
+    -> sample input / per-timestep SYNC(1) / output decode
 ```
 
-![PAIRV runtime 的 PAICORE 推理工作流](docs/paicore_runtime_workflow.svg)
+![PAIRV runtime 工作流](docs/paicore_runtime_workflow.svg)
 
-| 层             | 负责                                        | 不负责                          |
-| -------------- | ------------------------------------------- | ------------------------------- |
-| artifact       | 校验和访问`.bin` 的 FlatBuffers 内容      | 分配应用 tensor、执行模型       |
-| codec          | 把 tensor/mapping 编成或解成 frame          | 决定模型顺序或业务后处理        |
-| session I/O    | 发送 frame、接收 IRQ frame、维护 RX barrier | 阻塞等待或保存业务对象          |
-| session        | 初始化、加载配置、分块输入、同步和输出状态  | CPU 算子和模型拓扑编排          |
-| PAICORE runner | 固定首线程/首输入/首输出的便捷流程          | 多 runner 调度、通用 task graph |
-| application    | tensor 内存、采样循环、预/后处理、错误呈现  | 直接修改硬件同步协议            |
+## 1. 架构与边界
 
-生产代码应沿这条链路调用：
-`artifact_reader -> frame_codec -> session -> session_io -> paicore_runner`。
-`session` 和 `runner` 是不同对象；不要用含义不清的 `context` 代替它们。
+### 模块职责
 
-## 最小 runner 示例
+| 模块 | 负责 | 不负责 |
+| --- | --- | --- |
+| `artifact_reader` | FlatBuffers 校验、schema/version、thread、runtime、mapping 和 config view | 分配 tensor、访问 NoC、业务后处理 |
+| `frame_codec` | logical frame、输入 cursor/chunk、DATA/VOLTAGE 编解码 | IRQ、硬件等待、模型调度 |
+| `runtime_session` | 一个共享 session 的 artifact、全局 config、物理 owner、RX barrier、统计和 sticky fault | 线程时间线、tensor 业务语义 |
+| `thread_runner` | 显式 thread/mapping 选择、INIT、输入步、SYNC、输出 decode 和本地进度 | OS 线程、应用级 scheduler、并行 IRQ |
+| `transport_*_internal` | NoC/FIFO/IRQ 和 barrier 的内部 primitive | 应用 public API |
+| application | storage、样本循环、模型后处理和结果呈现 | 重写 frame 位布局或同步协议 |
+
+DATA/VOLTAGE 解码集中在 `frame_codec.c`。Runner open 时检查 mapping 是否满足直接地址
+计算的布局，满足时每帧用 O(1) 查找；其余合法布局使用通用 decoder 的线性 mapping
+查找。快路径不在 Runner 中维护第二份位布局逻辑。这里的复杂度差异不等于板卡实测加速比。
+
+`RuntimeSession` 是物理资源所有者，不是 OS 线程。多个 `ThreadRunner` 可以绑定同一
+session，但 Phase 1 只允许顺序执行，任何时刻只有一个 active runner 和一个 RX barrier。
+这样可以隔离不同 artifact thread 的 root、mapping、timeline 和 output state，同时不引入
+应用级调度器或并行 IRQ 协议。
+
+### 生命周期
+
+```text
+rvrt_runtime_session_open()
+  -> rvrt_runtime_session_configure()       // 全局 config 只提交一次
+  -> rvrt_thread_runner_open()              // 选择 thread/mapping
+  -> rvrt_thread_runner_run_sample()
+  -> rvrt_thread_runner_close()
+  -> rvrt_runtime_session_close()
+```
+
+`open` 只校验并借用 artifact、frame/RX storage，注册唯一 physical owner，不发送
+config。`configure` 第一次调用发送 artifact 中的全部全局 config；后续调用幂等返回成功。
+`runner_open` 缓存 thread runtime、root-relative mapping view、row bytes、completion
+target 和可用的 fast-layout，不发送 INIT 或 SYNC。关闭顺序必须是 runner 在前、session
+在后；仍有 runner 或 active barrier 时 session close 返回 `RVRT_RUNTIME_BUSY`。
+
+### 故障与状态
+
+`RVRT_RUNTIME_TIMEOUT`、`RVRT_RUNTIME_OVERFLOW`、`RVRT_RUNTIME_HARDWARE_ERROR` 和
+RX handler failure 会把共享 session 置为 sticky `RVRT_RUNTIME_FAULTED`。之后新的硬件
+操作立即失败，应用应完成 runner/session 清理并在硬件恢复后重新 open。输入容量、stride、
+对齐、mapping 或 codec 参数错误只返回参数错误，不自动污染 session 状态。
+
+`RVRT_RUNTIME_BUSY` 表示物理 owner、active runner 或 active barrier 已被占用；它不表示
+PAICORE 计算完成。`RVRT_RUNTIME_SYNC_MODE_ERROR` 表示同一 reset epoch 混用了 raw payload
+和 timeline barrier，必须重新 reset。统计是观察数据，不改变执行语义；关闭
+`RVRT_ENABLE_STATS` 时仍保留稳定的统计结构，但 counter 为零且 `enabled=false`。
+
+## 2. 如何使用
+
+### 最小完整样本
+
+下面的代码展示当前 API 的最短调用链。artifact、frame buffer、输入、输出和 VOLTAGE
+state 均由调用者拥有，并且必须覆盖整个生命周期。
 
 ```c
-#include "paicore_runner.h"
+#include "runtime_session.h"
+#include "thread_runner.h"
 
-static rvrt_paicore_runner_t runner;
+static rvrt_frame_t rx_storage[128];
+static rvrt_runtime_session_t session;
+static rvrt_thread_runner_t runner;
 
-int run_one_sample(const uint8_t *artifact, size_t artifact_size,
-                   rvrt_frame_t *frame_buffer, uint32_t frame_capacity,
-                   const uint8_t *input, size_t input_bytes,
-                   uint8_t *output, size_t output_capacity) {
-    const rvrt_paicore_runner_deploy_config_t config = {
+int run_sample(const uint8_t *artifact, size_t artifact_size,
+               const uint8_t *input, size_t input_bytes,
+               uint8_t *output, size_t output_bytes)
+{
+    const rvrt_runtime_session_open_config_t session_cfg = {
         .artifact_data = artifact,
         .artifact_size = artifact_size,
-        .frame_buffer = frame_buffer,
-        .frame_capacity = frame_capacity,
-        .voltage_state = NULL,
-        .voltage_state_capacity = 0,
-        .timeout_ms = 1000,
+        .frame_buffer = rx_storage,
+        .frame_capacity = 128U,
     };
-    rvrt_session_status_t status = rvrt_paicore_runner_deploy(&runner, &config);
-    if (status != RVRT_SESSION_OK) {
+    rvrt_runtime_status_t status =
+        rvrt_runtime_session_open(&session, &session_cfg);
+    if (status != RVRT_RUNTIME_OK) {
         return (int)status;
     }
 
-    status = rvrt_paicore_runner_run_sample(
-        &runner, input, input_bytes, 0, output, output_capacity, 0);
-    rvrt_paicore_runner_release(&runner);
-    return (int)status;
+    status = rvrt_runtime_session_configure(&session);
+    if (status != RVRT_RUNTIME_OK) {
+        (void)rvrt_runtime_session_close(&session);
+        return (int)status;
+    }
+
+    const rvrt_thread_runner_open_config_t runner_cfg = {
+        .session = &session,
+        .thread_index = 0U,
+        .input_mapping_index = 0U,
+        .output_mapping_index = 0U,
+        .voltage_state = NULL,
+        .voltage_state_capacity = 0U,
+        .timeout_ms = 1000U,
+    };
+    status = rvrt_thread_runner_open(&runner, &runner_cfg);
+    if (status == RVRT_RUNTIME_OK) {
+        status = rvrt_thread_runner_run_sample(
+            &runner, input, input_bytes, 0U, output, output_bytes, 0U);
+        (void)rvrt_thread_runner_close(&runner);
+    }
+    const rvrt_runtime_status_t close_status =
+        rvrt_runtime_session_close(&session);
+    return (int)((status != RVRT_RUNTIME_OK) ? status : close_status);
 }
 ```
 
-runner 当前固定使用 artifact 的首线程、首个输入映射和首个输出映射：
+`thread_index`、`input_mapping_index` 和 `output_mapping_index` 是 artifact 中的数字
+索引；C runtime 不解析 mapping name。`input_stride` 或 `output_stride` 为零表示紧凑
+连续行，否则以字节为单位。输入和输出区域不能非法重叠；VOLTAGE 输出还要求输出地址、
+容量和 stride 满足 `int32_t` 对齐，并提供足够的 caller-owned `rvrt_voltage_decode_state_t`。
 
-- `DATA` 输出按 `uint8_t` 解码；
-- `VOLTAGE` 输出按 `int32_t` 解码，并保留状态信息；
-- 零 stride 表示紧凑连续布局；
-- 同一进程只保持一个 active runner。
+### 多 runner
 
-需要多输入、多输出、显式 timestep 或自定义同步时，改用手动 session。
+同一 session 可依次绑定多个 runner：每个 runner 选择自己的 thread/root、mapping、
+runtime schedule、local `sync_mode`、完成步数和 decode state。先关闭所有 runner，再关闭
+session。共享 session 只复用 config、IRQ owner、RX storage 和 transport statistics，
+不会把一个 runner 的时间线复制给另一个 runner。
 
-## 手动 session 流程
+### Profiling 与统计
 
-```text
-rvrt_artifact_read
-  -> rvrt_session_init
-  -> rvrt_session_load_config
-  -> 每个 sample: reset model -> send input timesteps
-  -> rvrt_session_sync_wait_until(completion_sync_timestep, timeout, &rx, &rx_count)
-  -> rvrt_decode_output_frames (frame_codec)
-  -> rvrt_session_deinit
-```
+需要每次 INIT/SYNC 往返周期时，调用
+`rvrt_thread_runner_run_sample_profiled()`，并传入调用者分配的
+`rvrt_thread_runner_sample_timing_t` 数组；数组容量必须覆盖每个输入 timestep 和可选的
+一次 tail drain。`rvrt_thread_runner_get_stats()` 或
+`rvrt_runtime_session_get_stats()` 返回共享 transport snapshot。统计路径不应在 IRQ handler
+中加入日志、分配或 mapping 查询。
 
-典型调用顺序：
+Profiling 的计时点直接位于 Runner 的 INIT/SYNC 操作旁，包含可选 tail drain。
+当前不单独增加 profiling 模块：它没有独立执行职责，拆分只会增加转发接口；
+以后若出现多个执行组件共用的统计导出或聚合逻辑，再整理公共部分。
 
-1. 用 `rvrt_artifact_read` 校验对齐、schema version 和 buffer 边界。
-2. 读取 thread runtime，按 `timesteps`、`tick_depth` 和映射 stride 准备应用 buffer。
-3. `rvrt_session_init` 后加载 artifact 中的 config frames；普通 sample reset 不重复加载配置，只有 PAICORE 重新部署或恢复时才重新加载。
-4. 每个 sample 从 timestep 0 开始编码输入并发送；不要复用上一个 sample 的硬件时间。
-5. 使用 `rvrt_session_sync_wait_until` 等待累计完成目标，再解码 DATA 或 VOLTAGE 输出。
-6. 发生不可恢复错误时调用 `rvrt_session_deinit`，重新初始化 session，不要继续发送帧。
+## 3. 设计语义
 
-输入和输出 buffer 由应用拥有。session 容量不足返回
-`RVRT_SESSION_BUFFER_TOO_SMALL`；
-超出映射范围、stride 或 timestep 的请求返回相应错误，不应靠截断继续执行。
+### 输入、同步与输出时间
 
-## 术语与时间语义
+一次成功的 runner sample 会：
 
-### 对象命名
+1. 用本 runner 的 thread root 发送 INIT 并等待 COMPLETE，建立硬件 reset epoch。
+2. 对 `runtime.timesteps` 个应用 timestep 逐步编码并发送 input mapping。
+3. 每次输入后执行独立的 timeline `SYNC(1)` barrier，收到 COMPLETE 后才提交下一步。
+4. 对收到的 DATA/VOLTAGE frame 按 frame timestamp 散写到对应输出行。
+5. 当 artifact 的 `completion_sync_timestep` 大于输入步数时，再执行一次最终 tail drain。
 
-- **artifact**：FlatBuffers 编码的 `compile_artifacts.bin`。
-- **mapping**：输入或输出 tensor 与 PAICORE 地址/位宽/时间的映射。
-- **frame**：传输协议中的完整 PAICORE 帧；`frame_buffer` 是其存储区。
-- **session**：一次模型交互的状态机；**runner** 是固定首映射的便捷封装。
-- **workspace**：codec/session 使用的临时帧空间；不是应用 tensor 所有权。
-- **config frame**：模型部署后、sample 输入前发送的配置帧。
+`runtime.timesteps` 是应用输入/输出行数；`pipeline_latency` 是流水线元数据；
+`completion_sync_timestep` 是 artifact 给出的最终 PAICORE timeline target。它们不能被
+应用重新推导，也不能把 SYNC payload 当成输出行号。逐步 SYNC 是正确性基线，不宣称
+Phase 1 提供 `SYNC(N)` 吞吐优化。
 
-### 四种 timestep
+输出 decoder 是通用的：缺失的 DATA 保持零，非 DATA、未映射或范围外 frame 被忽略或按
+codec 状态返回错误；spike sum、vote、threshold、argmax 和 oracle 比较留在应用层。
+VOLTAGE frame 按 lane 合并到 `int32_t` 输出，并使用 runner 自己的 voltage state。
 
-| 名称                        | 含义                                      | 典型范围/来源               |
-| --------------------------- | ----------------------------------------- | --------------------------- |
-| layer-local timestep index  | 当前 tensor 的行号                        | `0 .. T-1`                |
-| PAICORE timestep coordinate | 去掉`target_lcn` 地址位后的硬件时间坐标 | 由 frame 地址解出           |
-| completed timestep count    | 自最近一次硬件 reset 后已完成的累计步数   | 单调递增计数                |
-| timeline target             | SYNC barrier 等待的累计目标               | `sync_wait_until(target)` |
+### 所有权和容量
 
-`runtime.completion_sync_timestep` 是完成目标，`runtime.pipeline_latency`
-是流水延迟。二者都不是输出行号，也不能用 SYNC payload 代替。
+| 对象 | 所有者 | 生命周期/约束 |
+| --- | --- | --- |
+| artifact bytes | 应用 | `RVRT_ARTIFACT_ALIGNMENT` 对齐；直到 session close 前保持不动 |
+| artifact/mapping view | runtime 借用 | 不复制、不释放，不能跨 artifact 使用 |
+| frame/RX storage | 应用 | session open 到 close 期间保持有效；一次 barrier 复用 |
+| input/output | 应用 | 容量、stride、对齐和 overlap 由 runner 校验 |
+| VOLTAGE state | 应用 | 每个 runner 独立提供，首次 sample 前由 runtime 清零 |
+| timing/stats | 应用 | timing 数组和 stats 结构由调用者提供 |
 
-例如目标序列为 `1 -> 2 -> 8` 时，timeline SYNC payload 为
-`1 -> 1 -> 6`（相邻目标的 delta）；payload 是协议字段，不是绝对时间。
+不要在 runtime 中引入隐藏静态大 buffer、动态分配或 OS mutex。硬件操作的串行化由
+session 的 active-runner/barrier 状态完成；IRQ handler 必须短小、无阻塞、无分配，且不能
+再次调用 session/runner API。
 
-runner 的 model reset 建立“本地 timestep 0”和硬件时间的对应关系。仅把
-软件计数器清零，或跳过 INIT 后重新发送输入，都不能重置硬件状态；不要用
-取模或偏移量掩盖 reset 错误。
+## 4. 开发与扩展约束
 
-### SYNC barrier 和 RX handler
+- 不修改 FlatBuffers schema 或 generated binding；artifact reader 是 schema 的只读适配层。
+- 不把 tensor 形状、模型拓扑或业务后处理塞进 transport/session。
+- 新的 thread/mapping 能力通过 artifact 数字索引扩展，不另造 name 解析 ABI。
+- `transport_*_internal.h` 仅供 runtime 和专门 host transport 回归使用，应用不得 include。
+- `experimental/` 不进入默认构建；其中的 ExecutionPlan/CPU task 实验不是当前 artifact 执行路径。
+- relay 预配置、并行 IRQ barrier、应用 scheduler、板卡恢复和真实 PAICORE 数值行为不属于
+  当前 C runtime 的 host 契约；纯 C runtime 由自身 session 控制 config。
 
-一次同步等待的状态序列是：
+## 5. 构建与测试
 
-```text
-开始 RX barrier -> 发送 SYNC -> 收到非 COMPLETE 的 IRQ frame
-                 -> 收到 COMPLETE -> 结束 barrier -> 阻塞调用返回
-```
+### 裸机构建
 
-RX handler 在 IRQ 上下文处理非 COMPLETE frame，只做快速解析、记录状态和
-唤醒等待者。handler 不得阻塞、分配内存、调用 session API 或保存 frame 指针；
-frame 内容只在回调期间有效。`RVRT_SYNC_MODE_RAW` 和
-`RVRT_SYNC_MODE_TIMELINE` 的 payload 解释不同，必须与 artifact runtime
-配置一致。
-
-## 构建与验证
-
-应用 Makefile 通常包含：
+应用 Makefile 引入 runtime build rules：
 
 ```make
-INCDIRS += . $(NUCLEI_SDK_ROOT)/Lib
+INCDIRS += . $(NUCLEI_SDK_ROOT)/third_party/flatbuffers/include
 include $(NUCLEI_SDK_ROOT)/Lib/runtime/build.mk
 ```
 
-`Lib/runtime/build.mk` 提供 `RVRT_ENABLE_STATS`（默认 `0`）、头文件
-路径和 runtime 源目录。实验性 executor 位于 `Lib/runtime/experimental`，
-不会因包含该 Makefile 而进入生产构建。
-
-宏按可见范围命名：`RVRT_ENABLE_STATS` 以及 `frame_codec.h`、
-`artifact_reader.h` 中的 `RVRT_*` 是应用可见的构建/API 常量，保持稳定；
-`frame_codec_internal.h` 中的 `RVRT_WF_*`、`RVRT_VOLT_*` 只供 runtime
-内部共享，`.c` 文件中的 `FC_*` 和 `RUN_*` 只在对应编译单元内使用。
-这些内部宏不是公共 ABI。各头文件的 include guard 和
-`PAIRV_RUNTIME_BUILD_MK_INCLUDED` 是防重复包含的结构性宏，不属于 API
-命名；generated FlatBuffers 的 include guard 和 `experimental/` 的 ABI
-宏也不参与该命名约定调整。
-
-裸机示例可按项目 Makefile 使用：
+`Lib/runtime/build.mk` 将 runtime 的 C/C++ 源目录加入构建，并提供
+`RVRT_ENABLE_STATS ?= 0`。可用的应用构建示例：
 
 ```sh
 source setup.sh
-make CORE=n307fd DOWNLOAD=ilmflashxip PROGRAM=application/baremetal/flatbuffers clean all
+make CORE=n307fd DOWNLOAD=ilmflashxip \
+  PROGRAM=application/runtime/mnist clean all
+make CORE=n307fd DOWNLOAD=ilmflashxip \
+  PROGRAM=application/baremetal/snn_head SNN_HEAD_TIMING=1 clean all
 ```
 
-主机 runtime 测试：
+这两个命令只做离线交叉编译；下载、UART 启动、NoC/IRQ 时序和模型数值仍需单独的板卡
+验证，不能由 ELF 生成成功推断。
+
+### Host runtime CTest
+
+每次使用新的临时目录，避免旧 CMake cache 掩盖源文件或宏变化：
 
 ```sh
-cmake -S tests/runtime -B /tmp/pairv-runtime-build
-cmake --build /tmp/pairv-runtime-build
-ctest --test-dir /tmp/pairv-runtime-build --output-on-failure
+cmake -S tests/runtime -B /tmp/pairv-runtime-tests
+cmake --build /tmp/pairv-runtime-tests -j2
+ctest --test-dir /tmp/pairv-runtime-tests --output-on-failure
 ```
 
-主机测试验证 codec、artifact reader、session 控制和 mock I/O；它不等价于
-板卡上的 PAICORE 或 UART 证据。需要硬件证据时，另行按板卡测试流程采集启动、
-`System ready.` 和阶段完成日志。
+统计开关分别构建：
 
-## 相关文件
+```sh
+cmake -S tests/runtime -B /tmp/pairv-runtime-tests-stats0 \
+  -DCMAKE_C_FLAGS='-DRVRT_ENABLE_STATS=0' \
+  -DCMAKE_CXX_FLAGS='-DRVRT_ENABLE_STATS=0'
+cmake -S tests/runtime -B /tmp/pairv-runtime-tests-stats1 \
+  -DCMAKE_C_FLAGS='-DRVRT_ENABLE_STATS=1' \
+  -DCMAKE_CXX_FLAGS='-DRVRT_ENABLE_STATS=1'
+```
 
-- [`generated/README.md`](generated/README.md)：`.fbs`、`.bin`、生成头文件和 C 读取示例。
-- [`artifact_reader.h`](artifact_reader.h)：稳定的 artifact C ABI。
-- [`frame_codec.h`](frame_codec.h)：输入/输出 frame 编解码 API。
-- [`session.h`](session.h)：手动 session、同步和 RX handler API。
-- [`paicore_runner.h`](paicore_runner.h)：单 runner 便捷 API。
+runtime 测试覆盖 codec、artifact view、session owner/config 幂等、不同 thread root 和
+mapping 路由、输入/输出 buffer 校验、tail drain、sticky fault、BUSY/close 顺序以及
+stats/no-stats。SNN Head host CTest 覆盖应用层、artifact、choreography 和 UART mock。
+这些 mock 只验证软件状态机、buffer 和可观察 frame 行为，不模拟真实 NoC 路由延迟、IRQ
+抢占、FIFO 时序、PAICORE 计算或板卡恢复，因此不能替代硬件验收。
+
+提交前检查：
+
+```sh
+clang-format --dry-run --Werror <所有修改的 C/C++ 文件>
+git diff --check
+```
+
+## 6. API 迁移记录
+
+本次是有意的 breaking cleanup。runtime 库和应用不再依赖旧的单 runner/session public
+API；没有保留 source-compatibility facade。下面的表是本 README 中唯一完整的迁移记录。
+
+| 旧 API | 当前 API/处理方式 |
+| --- | --- |
+| `rvrt_paicore_runner_t` | `rvrt_runtime_session_t` + `rvrt_thread_runner_t` |
+| `rvrt_paicore_runner_deploy_config_t` | `rvrt_runtime_session_open_config_t` + `rvrt_thread_runner_open_config_t` |
+| `rvrt_paicore_runner_deploy()` | `rvrt_runtime_session_open()` → `rvrt_runtime_session_configure()` → `rvrt_thread_runner_open()` |
+| `rvrt_paicore_runner_run_sample()` | `rvrt_thread_runner_run_sample()` |
+| `rvrt_paicore_runner_run_sample_profiled()` | `rvrt_thread_runner_run_sample_profiled()` |
+| `rvrt_paicore_runner_get_stats()` | `rvrt_thread_runner_get_stats()` 或 `rvrt_runtime_session_get_stats()` |
+| `rvrt_paicore_runner_release()` | `rvrt_thread_runner_close()` → `rvrt_runtime_session_close()` |
+| `rvrt_paicore_runner_sample_timing_t` | `rvrt_thread_runner_sample_timing_t` |
+| `rvrt_session_t` | `rvrt_runtime_session_t`；底层状态改由内部 `rvrt_transport_t` 持有 |
+| `rvrt_session_config_t` | `rvrt_runtime_session_open_config_t` |
+| `rvrt_session_status_t` | `rvrt_runtime_status_t` |
+| `RVRT_SESSION_*` | `RVRT_RUNTIME_*` |
+| `rvrt_session_sync_mode_t` | `rvrt_runtime_sync_mode_t` |
+| `rvrt_session_rx_frame_handler_t` | `rvrt_runtime_rx_frame_handler_t` |
+| `rvrt_session_rx_barrier_t` | `rvrt_transport_rx_barrier_t`（仅内部） |
+| `rvrt_session_stats_t` | `rvrt_runtime_stats_t`；transport 只使用该结构，不另导出统计类型 |
+| `rvrt_session_init()` / `rvrt_session_deinit()` | `rvrt_runtime_session_open()` / `rvrt_runtime_session_close()` |
+| `rvrt_session_load_config()` | `rvrt_runtime_session_configure()` |
+| `rvrt_session_send_frames()` | 内部 `rvrt_transport_send_frames()` |
+| `rvrt_session_send_input_timestep()` | 内部 `rvrt_transport_send_input_timestep()`，由 ThreadRunner 使用 |
+| `rvrt_session_reset_model()` | 内部按 runner thread 执行 INIT barrier |
+| `rvrt_session_sync_wait_payload()` | 内部 raw-payload barrier；不作为应用 public API |
+| `rvrt_session_sync_wait_until()` | 内部 timeline barrier；ThreadRunner 使用每步 `SYNC(1)` |
+| `rvrt_session_get_stats()` / `rvrt_session_status_string()` | `rvrt_runtime_session_get_stats()` / `rvrt_runtime_session_status_string()` |
+| `rvrt_artifact_t` | `rvrt_artifact_view_t` |
+| 低层 `rvrt_artifact_*` reader | 保留；仍是稳定的 artifact 访问函数族 |
+| `rvrt_frame_*`、`rvrt_build_*` codec | 保留；仍是稳定的 frame 编解码函数族 |
+| `runtime_transport_*` | 简化为内部 `rvrt_transport_*`；不导出为应用 API |
+
+迁移不改变 FlatBuffers schema、generated binding、frame wire format、relay、Python
+runtime、SoC 或板卡接口。当前验证证据是 host/mock CTest、SNN Head host 测试、离线交叉
+编译、格式和 API 审计；没有把这些结果表述为 relay、UART、NoC/IRQ 或真实板卡验收。

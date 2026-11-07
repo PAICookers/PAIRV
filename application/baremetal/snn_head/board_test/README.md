@@ -99,7 +99,7 @@ make SOC=evalsoc CORE=n307fd DOWNLOAD=ilmflashxip \
   target 的 `generated/<layer>/`，不是 asset，也不应提交。`make clean`
   会删除整个本地 `generated/`，包括旧构建配置遗留的其他层对象。
 - 各层 artifact 使用 `timesteps=8` 的完整样本图。层内通过
-  `rvrt_paicore_runner_run_sample()` 一次接收完整样本；runtime 对绝对 timestep `0..7`
+  `rvrt_thread_runner_run_sample()` 一次接收完整样本；runtime 对绝对 timestep `0..7`
   逐时间步执行“发送输入、累计 SYNC、IRQ 接收至 COMPLETE”，并把每步 RX work frame 散写到
   完整`[8][element]`输出。STREAM frame 去除`target_lcn`低位后的 timestamp 直接对应输出行，
   `pipeline_latency=1`不偏移输出行。reset 只发生在样本开始。

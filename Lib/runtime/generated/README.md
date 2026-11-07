@@ -15,31 +15,30 @@ FlatBuffers 对齐要求。当前 runtime 支持的 schema version 是 `1`。
 
 ## Schema 来源与再生成
 
-权威 schema：
+`compile_artifacts_generated.h` 的唯一权威 schema 位于 PAIBox 仓库：
 
 ```text
 PAIBox/paibox/backendv2/schemas/compile_artifacts.fbs
 ```
 
-PAIRV 中用于生成绑定的镜像：
-
-```text
-application/baremetal/flatbuffers/assets/compile_artifacts.fbs
-```
-
-再生成命令：
+再生成时直接使用这份 schema，不使用 PAIRV 的 FlatBuffers demo 中的 `.fbs`。
+在 PAIRV 根目录执行以下命令；先将 `PAIBOX_ROOT` 设置为 PAIBox checkout
+的路径（独立 worktree 中也须显式指定）：
 
 ```sh
+: "${PAIBOX_ROOT:?请设置 PAIBox checkout 路径}"
 flatc --cpp --gen-mutable --reflect-names \
   -o Lib/runtime/generated \
-  application/baremetal/flatbuffers/assets/compile_artifacts.fbs
+  "$PAIBOX_ROOT/paibox/backendv2/schemas/compile_artifacts.fbs"
 ```
 
-最近同步检查结果：PAIRV 镜像与 PAIBox `dev` 分支的 schema
-仅在注释上有差异，按当前生成命令得到的输出一致。
-`compile_artifacts_generated.h` 及对应再生成结果的 SHA-256 为
-`9d76750b95820402cebfe16c4f0c37dccb4ad6ac0e3552c510afec10eada104b`。
-更新 schema 后应同时刷新镜像、生成头文件和依赖 artifact，并重新运行 host tests。
+`flatc` 的版本应与仓库内 FlatBuffers 头文件和生成绑定的版本检查一致。
+更新 schema 后，应重新生成绑定、检查 reader 对相关字段的支持，并按需更新
+依赖 artifact、运行 host tests。同步记录应注明 PAIBox schema 的版本或 hash、
+`flatc` 版本及绑定 hash；不要沿用 demo schema 的历史一致性声明。
+
+schema 已包含字段、生成头已有 accessor、C reader 已读取字段是三个不同层次，
+不能仅凭更新 schema 或绑定就宣称 runtime 已使用新增元数据。
 
 ## 当前数据树
 
@@ -55,8 +54,10 @@ CompileArtifacts
 │       │   └── InputTensorMapping { name, shape, bit_width, tick, entries[] }
 │       ├── output_mappings { target_lcn, items[] }
 │       │   └── OutputTensorMapping { name, shape, kind, bit_width, tick, entries[] }
-│       └── core_ticks[]
-└── config_frames { words, word_order }
+│       ├── core_ticks[]
+│       └── occupied_chip_count
+├── config_frames { words, word_order }
+└── target_board
 ```
 
 每个 input/output mapping 的 `entries[]` 以 `axon_bit_idx` 作为查找键；它是
@@ -71,12 +72,12 @@ CompileArtifacts
 
 ### 枚举
 
-| 枚举           | 当前值                                                                                |
-| -------------- | ------------------------------------------------------------------------------------- |
+| 枚举           | 当前值                                                                                          |
+| -------------- | ----------------------------------------------------------------------------------------------- |
 | `DataType`   | `NOT_SET`, `UINT1`, `INT1`, `UINT2`, `INT2`, `UINT4`, `INT4`, `UINT8`, `INT8` |
-| `OutputKind` | `DATA`, `VOLTAGE`                                                                 |
-| `DecodeMode` | `STREAM`, `STEP`                                                                  |
-| `WordOrder`  | `HIGH_FIRST`, `LOW_FIRST`                                                         |
+| `OutputKind` | `DATA`, `VOLTAGE`                                                                           |
+| `DecodeMode` | `STREAM`, `STEP`                                                                            |
+| `WordOrder`  | `HIGH_FIRST`, `LOW_FIRST`                                                                   |
 
 当前生产 runtime 不从 schema 读取 `ExecutionPlan`、`RuntimeTarget`、
 `RuntimeBuffer`、`CpuTask`、`PaicorePhase` 或 `ExecutionStage`；旧的
@@ -96,7 +97,7 @@ C 应用包含 [`../artifact_reader.h`](../artifact_reader.h)，由 reader 负�
 #include "artifact_reader.h"
 
 int inspect_artifact(const uint8_t *data, size_t size) {
-    rvrt_artifact_t artifact;
+    rvrt_artifact_view_t artifact;
     rvrt_artifact_info_t info;
     rvrt_artifact_runtime_t runtime;
     rvrt_artifact_input_mapping_view_t input_view;
@@ -146,6 +147,10 @@ int inspect_artifact(const uint8_t *data, size_t size) {
 
 ## 解释几个容易混淆的字段
 
+- `target_board:string` 是编译产物的目标板型名称；它不是板卡探测结果，也不会
+  自动让 C runtime 配置或切换板型。
+- `occupied_chip_count:uint` 是本线程占用的芯片数量，缺省值 `0` 表示未声明，
+  不能直接解释为“没有使用芯片”。它不是 thread 数或 output mapping 数。
 - `shape` 是逻辑 tensor 形状；实际 frame 存储还受 `bit_width`、`tick` 和 entry stride 影响。
 - `kind=DATA` 表示离散输出；`kind=VOLTAGE` 表示电压输出，runtime 还会保留电压状态。
   此时 C view 使用 `RVRT_DTYPE_VOLTAGE_INT32` 表示 signed int32；它是 runtime

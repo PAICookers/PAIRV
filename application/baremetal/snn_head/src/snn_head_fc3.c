@@ -49,7 +49,7 @@ bool snn_head_run_fc3(float *action)
     /* acc_int32[8][7] 仅 224 字节，放栈上；解码填满后统一反量化到 action。 */
     int32_t fc3_acc[SNN_HEAD_TIMESTEPS][SNN_HEAD_ACTION_DIM];
 
-    const rvrt_paicore_runner_deploy_config_t runner_config = {
+    const snn_head_runtime_layer_config_t runner_config = {
         .artifact_data = snn_head_fc3_artifact_start,
         .artifact_size = snn_head_artifact_size(snn_head_fc3_artifact_size),
         .frame_buffer = layer_frame_buf,

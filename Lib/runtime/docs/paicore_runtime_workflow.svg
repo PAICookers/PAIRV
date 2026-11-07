@@ -73,7 +73,7 @@
 
   <rect class="box session" x="470" y="452" width="246" height="112"/>
   <text class="box-title" x="490" y="480">部署一次</text>
-  <text class="api" x="490" y="505"><tspan x="490">rvrt_paicore_runner_</tspan><tspan x="490" dy="18">deploy(config)</tspan></text>
+  <text class="api" x="490" y="505"><tspan x="490">rvrt_thread_runner_</tspan><tspan x="490" dy="18">deploy(config)</tspan></text>
   <text class="small" x="490" y="548">session init + load config</text>
 
   <rect class="box core" x="485" y="635" width="216" height="72"/>
@@ -91,7 +91,7 @@
 
   <rect class="box app" x="780" y="144" width="260" height="88"/>
   <text class="box-title" x="800" y="172">运行一个独立样本</text>
-  <text class="api" x="800" y="197"><tspan x="800">rvrt_paicore_runner_</tspan><tspan x="800" dy="18">run_sample()</tspan></text>
+  <text class="api" x="800" y="197"><tspan x="800">rvrt_thread_runner_</tspan><tspan x="800" dy="18">run_sample()</tspan></text>
 
   <rect class="box session" x="805" y="452" width="210" height="94"/>
   <circle class="step-session" cx="828" cy="476" r="13"/>

@@ -64,7 +64,7 @@ bool snn_head_run_fc2(void)
         return false;
     }
 
-    const rvrt_paicore_runner_deploy_config_t runner_config = {
+    const snn_head_runtime_layer_config_t runner_config = {
         .artifact_data = snn_head_fc2_artifact_start,
         .artifact_size = snn_head_artifact_size(snn_head_fc2_artifact_size),
         .frame_buffer = layer_frame_buf,

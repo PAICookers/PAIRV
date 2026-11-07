@@ -17,7 +17,7 @@ int main(void)
 {
     const uint8_t *const artifact_data = rvrt_fb_artifact_start;
     const uint32_t artifact_size = binary_size(rvrt_fb_artifact_size);
-    rvrt_artifact_t artifact = {0};
+    rvrt_artifact_view_t artifact = {0};
     rvrt_artifact_info_t info = {0};
 
     rvrt_artifact_status_t status =

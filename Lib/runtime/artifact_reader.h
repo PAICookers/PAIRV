@@ -35,11 +35,11 @@ typedef enum rvrt_artifact_status_e {
  * The backing byte buffer passed to rvrt_artifact_read() must remain aligned
  * and alive for the lifetime of this object and every view derived from it.
  */
-typedef struct rvrt_artifact_s {
+typedef struct rvrt_artifact_view_s {
     const void *root;
     const void *io_mapping;
     const void *config_frames;
-} rvrt_artifact_t;
+} rvrt_artifact_view_t;
 
 /** @brief Small, model-independent artifact metadata. */
 typedef struct rvrt_artifact_info_s {
@@ -180,7 +180,7 @@ typedef struct rvrt_artifact_output_mapping_view_s {
  *         artifact contract.
  */
 rvrt_artifact_status_t rvrt_artifact_read(const uint8_t *data, size_t size,
-                                          rvrt_artifact_t *artifact);
+                                          rvrt_artifact_view_t *artifact);
 
 /**
  * @brief Read basic metadata without materializing runtime buffers.
@@ -190,8 +190,9 @@ rvrt_artifact_status_t rvrt_artifact_read(const uint8_t *data, size_t size,
  * @return RVRT_ARTIFACT_OK on success; otherwise a null-argument or artifact
  *         status propagated while reading the required tables.
  */
-rvrt_artifact_status_t rvrt_artifact_get_info(const rvrt_artifact_t *artifact,
-                                              rvrt_artifact_info_t *info);
+rvrt_artifact_status_t
+rvrt_artifact_get_info(const rvrt_artifact_view_t *artifact,
+                       rvrt_artifact_info_t *info);
 
 /**
  * @brief Count raw 32-bit configuration words in ConfigFrames.words.
@@ -201,7 +202,7 @@ rvrt_artifact_status_t rvrt_artifact_get_info(const rvrt_artifact_t *artifact,
  *         status.
  */
 rvrt_artifact_status_t
-rvrt_artifact_config_word_count(const rvrt_artifact_t *artifact,
+rvrt_artifact_config_word_count(const rvrt_artifact_view_t *artifact,
                                 uint32_t *count);
 
 /**
@@ -218,7 +219,7 @@ rvrt_artifact_config_word_count(const rvrt_artifact_t *artifact,
  *         an unsupported word-order enum; or an artifact/null-argument status.
  */
 rvrt_artifact_status_t
-rvrt_artifact_config_frame_words(const rvrt_artifact_t *artifact,
+rvrt_artifact_config_frame_words(const rvrt_artifact_view_t *artifact,
                                  uint32_t frame_index, uint32_t *high,
                                  uint32_t *low);
 
@@ -230,7 +231,8 @@ rvrt_artifact_config_frame_words(const rvrt_artifact_t *artifact,
  *         status.
  */
 rvrt_artifact_status_t
-rvrt_artifact_thread_count(const rvrt_artifact_t *artifact, uint32_t *count);
+rvrt_artifact_thread_count(const rvrt_artifact_view_t *artifact,
+                           uint32_t *count);
 
 /**
  * @brief Read the root-core-relative NoC offset for one I/O thread.
@@ -242,7 +244,7 @@ rvrt_artifact_thread_count(const rvrt_artifact_t *artifact, uint32_t *count);
  *         invalid thread index; or an artifact/null-argument status.
  */
 rvrt_artifact_status_t rvrt_artifact_thread_root_core_offset(
-    const rvrt_artifact_t *artifact, uint32_t thread_index,
+    const rvrt_artifact_view_t *artifact, uint32_t thread_index,
     rvrt_artifact_core_offset_t *root_core_offset);
 
 /**
@@ -256,7 +258,7 @@ rvrt_artifact_status_t rvrt_artifact_thread_root_core_offset(
  *         absent; or an artifact/null-argument status.
  */
 rvrt_artifact_status_t
-rvrt_artifact_thread_runtime(const rvrt_artifact_t *artifact,
+rvrt_artifact_thread_runtime(const rvrt_artifact_view_t *artifact,
                              uint32_t thread_index,
                              rvrt_artifact_runtime_t *runtime);
 
@@ -275,7 +277,7 @@ rvrt_artifact_thread_runtime(const rvrt_artifact_t *artifact,
  *         mapping entries are absent; or an artifact/null-argument status.
  */
 rvrt_artifact_status_t rvrt_artifact_get_input_mapping_view(
-    const rvrt_artifact_t *artifact, uint32_t thread_index,
+    const rvrt_artifact_view_t *artifact, uint32_t thread_index,
     uint32_t input_index, rvrt_artifact_input_mapping_view_t *view);
 
 /**
@@ -294,7 +296,7 @@ rvrt_artifact_status_t rvrt_artifact_get_input_mapping_view(
  *         for an invalid output shape.
  */
 rvrt_artifact_status_t rvrt_artifact_get_output_mapping_view(
-    const rvrt_artifact_t *artifact, uint32_t thread_index,
+    const rvrt_artifact_view_t *artifact, uint32_t thread_index,
     uint32_t output_index, rvrt_artifact_output_mapping_view_t *view);
 
 /**

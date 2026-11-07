@@ -103,26 +103,55 @@ bool snn_head_validate_layer_artifact(
     return true;
 }
 
-bool snn_head_run_paicore_layer(
-    const char *layer_name, const rvrt_paicore_runner_deploy_config_t *config,
-    const uint8_t *input, size_t input_capacity, size_t input_stride,
-    void *output, size_t output_capacity, size_t output_stride)
+bool snn_head_run_paicore_layer(const char *layer_name,
+                                const snn_head_runtime_layer_config_t *config,
+                                const uint8_t *input, size_t input_capacity,
+                                size_t input_stride, void *output,
+                                size_t output_capacity, size_t output_stride)
 {
-    rvrt_paicore_runner_t runner = {0};
+    rvrt_runtime_session_t session = {0};
+    rvrt_thread_runner_t runner = {0};
     SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_DEPLOY);
-    const rvrt_session_status_t deploy_status =
-        rvrt_paicore_runner_deploy(&runner, config);
+    const rvrt_runtime_session_open_config_t session_config = {
+        .artifact_data = config->artifact_data,
+        .artifact_size = config->artifact_size,
+        .frame_buffer = config->frame_buffer,
+        .frame_capacity = config->frame_capacity,
+    };
+    rvrt_runtime_status_t deploy_status =
+        rvrt_runtime_session_open(&session, &session_config);
+    if (deploy_status == RVRT_RUNTIME_OK) {
+        deploy_status = rvrt_runtime_session_configure(&session);
+    }
+    if (deploy_status == RVRT_RUNTIME_OK) {
+        const rvrt_thread_runner_open_config_t runner_config = {
+            .session = &session,
+            .thread_index = 0U,
+            .input_mapping_index = 0U,
+            .output_mapping_index = 0U,
+            .voltage_state = config->voltage_state,
+            .voltage_state_capacity = config->voltage_state_capacity,
+            .timeout_ms = config->timeout_ms,
+        };
+        deploy_status = rvrt_thread_runner_open(&runner, &runner_config);
+    }
     SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_DEPLOY);
     if (!snn_head_runner_status_ok(layer_name, "runner deploy",
                                    deploy_status)) {
+        if (runner.opened) {
+            (void)rvrt_thread_runner_close(&runner);
+        }
+        if (session.opened) {
+            (void)rvrt_runtime_session_close(&session);
+        }
         return false;
     }
 
 #if SNN_HEAD_TIMING
-    rvrt_session_stats_t stats_after_deploy = {0};
-    (void)rvrt_paicore_runner_get_stats(&runner, &stats_after_deploy);
+    rvrt_runtime_stats_t stats_after_deploy = {0};
+    (void)rvrt_runtime_session_get_stats(&session, &stats_after_deploy);
     uint64_t sync_round_trip_cycles[SNN_HEAD_TIMESTEPS] = {0};
-    rvrt_paicore_runner_sample_timing_t timing = {
+    rvrt_thread_runner_sample_timing_t timing = {
         .sync_round_trip_cycles = sync_round_trip_cycles,
         .sync_round_trip_capacity = SNN_HEAD_TIMESTEPS,
     };
@@ -130,26 +159,27 @@ bool snn_head_run_paicore_layer(
 
     SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_SAMPLE);
 #if SNN_HEAD_TIMING
-    const rvrt_session_status_t run_status =
-        rvrt_paicore_runner_run_sample_profiled(
+    const rvrt_runtime_status_t run_status =
+        rvrt_thread_runner_run_sample_profiled(
             &runner, input, input_capacity, input_stride, output,
             output_capacity, output_stride, &timing);
 #else
-    const rvrt_session_status_t run_status = rvrt_paicore_runner_run_sample(
+    const rvrt_runtime_status_t run_status = rvrt_thread_runner_run_sample(
         &runner, input, input_capacity, input_stride, output, output_capacity,
         output_stride);
 #endif
     SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_SAMPLE);
     if (!snn_head_runner_status_ok(layer_name, "runner run", run_status)) {
         SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_RELEASE);
-        (void)rvrt_paicore_runner_release(&runner);
+        (void)rvrt_thread_runner_close(&runner);
+        (void)rvrt_runtime_session_close(&session);
         SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_RELEASE);
         return false;
     }
 
 #if SNN_HEAD_TIMING
-    rvrt_session_stats_t stats_after_run = {0};
-    (void)rvrt_paicore_runner_get_stats(&runner, &stats_after_run);
+    rvrt_runtime_stats_t stats_after_run = {0};
+    (void)rvrt_runtime_session_get_stats(&session, &stats_after_run);
     snn_head_profile_record_runner(
         sync_round_trip_cycles, timing.sync_round_trip_count,
         (uint64_t)timing.init_round_trip_cycles,
@@ -171,8 +201,12 @@ bool snn_head_run_paicore_layer(
 #endif
 
     SNN_HEAD_PROFILE_PHASE_BEGIN(SNN_HEAD_PROFILE_RELEASE);
-    const rvrt_session_status_t release_status =
-        rvrt_paicore_runner_release(&runner);
+    const rvrt_runtime_status_t runner_close_status =
+        rvrt_thread_runner_close(&runner);
+    const rvrt_runtime_status_t release_status =
+        (runner_close_status == RVRT_RUNTIME_OK)
+            ? rvrt_runtime_session_close(&session)
+            : runner_close_status;
     SNN_HEAD_PROFILE_PHASE_END(SNN_HEAD_PROFILE_RELEASE);
     return snn_head_runner_status_ok(layer_name, "runner release",
                                      release_status);
