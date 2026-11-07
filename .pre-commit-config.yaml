@@ -1,0 +1,16 @@
+default_install_hook_types: [pre-commit, prepare-commit-msg]
+ci:
+  autofix_commit_msg: ":rotating_light: auto fix by pre-commit hooks"
+  autofix_prs: true
+  autoupdate_branch: dev
+  autoupdate_schedule: monthly
+  autoupdate_commit_msg: ":arrow_up: auto update by pre-commit hooks"
+repos:
+  - repo: https://github.com/cpp-linter/cpp-linter-hooks
+    rev: v1.8.4
+    hooks:
+      - id: clang-format
+        args: [--style=file]
+        additional_dependencies: [clang-format==21.1.8]
+        files: \.(c|cc|cpp|cxx|h|hh|hpp|hxx)$
+        exclude: ^third_party/
